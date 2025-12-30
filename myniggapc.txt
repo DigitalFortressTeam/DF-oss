@@ -1,7 +1,0 @@
-pc:cpu:i5 12400f 110$ motherboared:110$ 
-Gpu: rtx 3060 ti 12gb 230$
-ram: hyperx fury 16gb 30$
-ssd m.2 nvme: any kind 512gb 25-30$
-psu: 700w 40$
-case: 100$
-610-570$
