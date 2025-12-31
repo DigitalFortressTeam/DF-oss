@@ -116,65 +116,49 @@ void rotate_left(byte Pwm, bool instant)
   int PwmL = 127 - (Pwm - 127);
   if (instant)
   {
-    moveInstant(PwmL, Pwm);
+    moveInstant(Pwm, PwmL);
   }
   else
   {
-    move(PwmL, Pwm);
+    move(Pwm, PwmL);
   }
 }
 void rotate_right(byte Pwm, bool instant)
 {
-  int PwmR = 254 - Pwm;
+  int PwmR = 127 - (Pwm - 127);
   if (instant)
   {
-    moveInstant(Pwm, PwmR);
+    moveInstant(PwmR, Pwm);
   }
   else
   {
-    move(Pwm, PwmR);
+    move(PwmR, Pwm);
   }
 }
 void turn_L(int Pwm, int difference, bool instant)
 {
-  if (Pwm > 252)
-  {
-    Pwm = 252;
-  }
-  else if (Pwm <= 128)
-  {
-    Pwm = 130;
-  }
   int PwmL = Pwm - difference;
 
   if (instant)
   {
-    moveInstant(PwmL, Pwm);
+    moveInstant(Pwm, PwmL);
   }
   else
   {
-    move(PwmL, Pwm);
+    move(Pwm, PwmL);
   }
 }
 void turn_R(int Pwm, int difference, bool instant)
 {
-  if (Pwm > 252)
-  {
-    Pwm = 252;
-  }
-  else if (Pwm <= 128)
-  {
-    Pwm = 130;
-  }
   int PwmR = Pwm - difference;
 
   if (instant)
   {
-    moveInstant(Pwm, PwmR);
+    moveInstant(PwmR, Pwm);
   }
   else
   {
-    move(Pwm, PwmR);
+    move(PwmR, Pwm);
   }
 }
 void brake()

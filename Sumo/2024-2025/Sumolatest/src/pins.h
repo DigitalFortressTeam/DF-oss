@@ -1,7 +1,7 @@
 const int motorLEN = 7;
 const int motorREN = 9;
-const int motorL_PWM = 12;
-const int motorR_PWM = 11;
+const int motorL_PWM = 11;
+const int motorR_PWM = 12;
 const int GROUND_BL = 15;
 const int GROUND_BR = A15;
 const int GROUND_FL = 10;
@@ -74,8 +74,9 @@ int mainState = 0;
 #define Advanced_RotateSlowlyleft 15
 #define Advanced_APPROACH_step1 16
 #define Advanced_APPROACH_step2 17
-#define Advanced_GROUNDED 18
-#define Cleaner 19
+#define Advanced_GROUNDEDr 19
+#define Advanced_GROUNDEDl 20
+#define Cleaner 21
 unsigned long tfirstsearch1 = 0;
 unsigned long tfirstsearch2 = 0;
 unsigned long ttornadosearch = 0;
@@ -83,6 +84,8 @@ unsigned long trandomsearch1 = 0;
 unsigned long trandomsearch2 = 0;
 unsigned long t1approach1 = 0;
 unsigned long t1approach2 = 0;
+unsigned long tgrounded = 0;
+unsigned long trotation = 0;
 
 int flapsstate;
 #define Flaps_LAUNCHER 1
