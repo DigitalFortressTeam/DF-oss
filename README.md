@@ -1,23 +1,65 @@
-# DF-main
+# DigitalFortressTeam · Robotics
 
-> Competition firmware and design files for the **Digital Fortress mini sumo robot** — search, attack, and push the opponent out of the ring.
+> Open-source competition firmware, hardware, and programs for **DigitalFortressTeam's** two robotics projects: **Sumo** (autonomous fighting robot) and **Line Tracking** (PID + EV3 line followers).
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Language](https://img.shields.io/badge/language-C%2B%2B11-informational.svg)
-![Platform](https://img.shields.io/badge/platform-Arduino%20Mega%202560-00979D.svg)
-![Framework](https://img.shields.io/badge/framework-PlatformIO-FF2D20.svg)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Arduino%20Mega%202560%20%7C%20LEGO%20EV3-00979D.svg)]()
+[![Framework](https://img.shields.io/badge/framework-PlatformIO%20%7C%20EV3%20Lab-FF2D20.svg)]()
 
 ---
 
-## Overview
+## Table of Contents
 
-`DF-main` is the working repository for DigitalFortressTeam's robotics competition projects, with the **mini sumo robot** as the primary focus. It also holds an older PID line follower and LEGO EV3 experiments.
+- [Sumo](#sumo)
+  - [Overview](#sumo--overview)
+  - [How It Works](#sumo--how-it-works)
+  - [Core Architecture](#sumo--core-architecture)
+  - [Key Features](#sumo--key-features)
+  - [Tech Stack](#sumo--tech-stack)
+  - [Installation & Setup](#sumo--installation--setup)
+  - [Usage Guide](#sumo--usage-guide)
+  - [Pin Map](#sumo--pin-map)
+  - [Achievements](#sumo--achievements)
+  - [Code Quality](#sumo--code-quality)
+- [Line Tracking](#line-tracking)
+  - [Overview](#line-tracking--overview)
+  - [How PID Line Following Works](#line-tracking--how-pid-line-following-works)
+  - [Sharp Turns (Full-Turn Sensors)](#line-tracking--sharp-turns-full-turn-sensors)
+  - [Arduino PID Follower](#line-tracking--arduino-pid-follower)
+  - [LEGO EV3 Follower](#line-tracking--lego-ev3-follower)
+  - [Achievements](#line-tracking--achievements)
 
-The sumo bot is an autonomous fighting robot designed for mini sumo competitions: a 3-minute match on a 77 cm black ring where the first robot to push the other out wins.
+---
 
-**How it works:** an IR remote control (Panasonic protocol) selects one of five attack strategies (or a cleaning mode) before the match. Once started, the robot searches for the opponent with IR proximity sensors, attacks, and recovers from the ring edge using ground sensors.
+# Sumo
 
-### Core architecture
+## Sumo · Overview
+
+The **Sumo** project is an autonomous fighting robot built for **sumo robot competitions**. Two robots face off on a black circular ring; the first to push the other out wins. A match runs in timed rounds, and the robot must find, attack, and defend itself fully autonomously — no human input once the match starts.
+
+The firmware lives in [`Sumo/2024-2025/Sumolatest/`](Sumo/2024-2025/Sumolatest/), a clean PlatformIO project targeting the Arduino Mega 2560.
+
+## Sumo · How It Works
+
+Before the match, an **IR remote control** (Panasonic protocol) selects one of five attack strategies (or a cleaning mode); the built-in LED blinks to confirm the choice. Once the operator presses **Start**, the robot runs the full match on its own:
+
+1. **Search** — sweep the ring looking for the opponent using IR proximity sensors.
+2. **Attack** — once an opponent is detected, drive directly at it and push.
+3. **Recover** — if the robot reaches the white ring border (detected by ground sensors), it backs up and turns back into the ring.
+
+The operator can press **Stop** at any time to halt the robot instantly.
+
+### High-level flow
+
+```
+Power on → Waiting (select strategy via IR) → START pressed
+   → Search (spin/sweep for opponent)
+      → Opponent found? → Attack (drive forward, push)
+      → Edge detected?  → Recover (back up, rotate, re-search)
+   → STOP pressed → halt → back to Waiting
+```
+
+## Sumo · Core Architecture
 
 The firmware is built around three cooperating state machines:
 
@@ -44,7 +86,7 @@ The firmware is built around three cooperating state machines:
 - Motor output uses a **128-centered differential-drive PWM scheme**: `128` = stop, `>128` = forward, `<128` = reverse.
 - The `MotionServerRun()` filter smoothly ramps PWM targets to reduce mechanical shock.
 
-## Key Features
+## Sumo · Key Features
 
 - **Remote strategy selection** — Panasonic IR remote picks one of 5 strategies or cleaning mode; LED blink feedback confirms the choice.
 - **Remote start/stop** — start the match and stop the robot without touching it.
@@ -55,7 +97,7 @@ The firmware is built around three cooperating state machines:
 - **Non-blocking timing** — `millis()`-based state timers (except a few remaining `delay()` calls; see Code Quality section).
 - **Clean PlatformIO project** — dependency resolution via `lib_deps` (IRremote), single-command build and upload.
 
-## Prerequisites & Tech Stack
+## Sumo · Tech Stack
 
 | Component | Requirement |
 |-----------|-------------|
@@ -68,20 +110,13 @@ The firmware is built around three cooperating state machines:
 | Actuators | 2× DC motors + dual motor driver (PWM + enable pins) |
 | Remote | IR remote using the Panasonic protocol |
 
-**Repository-wide (sibling projects):**
-
-| Project | Stack |
-|---------|-------|
-| `Line_tracker/` | Arduino (`Line_tracker.ino`), PID controller |
-| `ev3 and vids/` | LEGO EV3, reference strategy videos |
-
-## Installation & Setup
+## Sumo · Installation & Setup
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/DigitalFortressTeam/DF-main.git
-cd "DF-main/Sumo/2024-2025/Sumolatest"
+git clone https://github.com/DigitalFortressTeam/DF-oss.git
+cd "DF-oss/Sumo/2024-2025/Sumolatest"
 ```
 
 ### 2. Build the firmware
@@ -112,7 +147,7 @@ pio run --target upload --upload-port [your-port]
 
 Install the [PlatformIO IDE](https://platformio.org/install/ide?install=vscode) extension in VS Code. The project already recommends it in `.vscode/extensions.json`.
 
-## Usage Guide
+## Sumo · Usage Guide
 
 ### Match procedure
 
@@ -142,7 +177,9 @@ pio device monitor -b 9600
 
 Prints sensor status on every loop — useful for tuning sensor thresholds.
 
-### Pin map (firmware defaults, `src/pins.h`)
+## Sumo · Pin Map
+
+Firmware defaults from `src/pins.h`:
 
 | Pin | Function | Pin | Function |
 |-----|----------|-----|----------|
@@ -154,38 +191,123 @@ Prints sensor status on every loop — useful for tuning sensor thresholds.
 | 10 | Ground sensor, front-left | A15 | Ground sensor, back-right |
 | 14 | Ground sensor, front-right | — | — |
 
+## Sumo · Achievements
+
+The **Sumo** firmware in this repository was used in competition by DigitalFortressTeam:
+
+| Competition | Category | Result |
+|-------------|----------|--------|
+| **ARC9** — Annual Robotics Competition | Sumo | 🥈 **2nd place** |
+| **ARC10** — Annual Robotics Competition | Sumo | 🏅 **Best programming rank** |
+
+---
+
+# Line Tracking
+
+## Line Tracking · Overview
+
+The **Line Tracking** project covers two line-follower robots on different platforms that share one goal: follow a contrasting line (typically white-on-black or black-on-white) as fast and smoothly as possible.
+
+- **Arduino PID follower** — a custom robot using analog photo-reflector sensors and a PID controller ([`Line_tracker/2024/Line_tracker.ino`](Line_tracker/2024/Line_tracker.ino)).
+- **LEGO EV3 follower** — a line follower programmed in LEGO EV3 Lab ([`ev3/Digitalfortresscode.ev3`](ev3/Digitalfortresscode.ev3)).
+
+## Line Tracking · How PID Line Following Works
+
+The Arduino follower uses a **PID controller** to keep the robot centered on the line. Two close-range analog sensors (left and right) read how much light they reflect — when the robot drifts off the line, the difference between the two readings becomes the **error** signal that the PID loop corrects.
+
+### The PID components
+
+The controller combines three terms, each tuned by a constant:
+
+| Term | Symbol | What it does | This robot's constant |
+|------|--------|--------------|------------------------|
+| **Proportional** | `Kp` | Reacts to the *current* error — the bigger the drift, the harder it corrects. | `0.7` |
+| **Integral** | `Ki` | Accumulates *past* error over time — eliminates small steady-state offset. | `0.001` |
+| **Derivative** | `Kd` | Reacts to the *rate of change* of error — dampens oscillation so corrections don't overshoot. | `14` |
+
+Each loop iteration:
+
+1. Read both sensors → `error = rightSensor − leftSensor`.
+2. Update the running sum → `integral += error`.
+3. Compute the change → `derivative = error − lastError`.
+4. Combine → `pid = (Kp × error) + (Ki × integral) + (Kd × derivative)`.
+5. Map the PID output onto a speed difference, then drive the two motors in opposite directions by that amount:
+   - `rightMotor = baseSpeed + correction`
+   - `leftMotor  = baseSpeed − correction`
+6. Save `lastError = error` for the next iteration, then short `delay(5)` to pace the loop.
+
+When the robot is perfectly centered, `error ≈ 0` and both motors run at `baseSpeed` (255) — full speed straight. Any drift creates a non-zero `pid`, which steers the robot back toward the line automatically. `Kd = 14` is relatively high, which makes the follower aggressive at cancelling oscillation so it can take curves fast without weaving.
+
+## Line Tracking · Sharp Turns (Full-Turn Sensors)
+
+PID alone follows gentle curves but struggles at 90°+ turns where the line suddenly leaves the sensor range. Two extra **wide (full-turn) sensors** placed further apart detect when the line has drifted far to one side and trigger a hard turn:
+
+- **`Full_Right_Turn()`** — if the right wide sensor detects the line, the robot stops the right motor and drives only the left motor, spinning hard left until the close sensors pick the line up again.
+- **`Full_Left_Turn()`** — the mirror: drive only the right motor to spin hard right until the close sensors reacquire the line.
+
+`delay(50)` gives the turn a small initial kick before the `while` loop holds the turn until the two close sensors are back over the line, at which point normal PID resumes.
+
+## Line Tracking · Arduino PID Follower
+
+| Component | Value |
+|-----------|-------|
+| Board | Arduino (analog + PWM pins) |
+| Close sensors | `A1` (right), `A2` (left) — analog photo-reflectors |
+| Full-turn sensors | pin `6` (right), pin `7` (left) — digital |
+| Motors | pin `4` (right), pin `5` (left) — PWM via `analogWrite` |
+| Base speed | 255 (max) |
+| PID constants | `Kp = 0.7`, `Ki = 0.001`, `Kd = 14` |
+| Loop pace | `delay(5)` per PID cycle |
+
+Source: [`Line_tracker/2024/Line_tracker.ino`](Line_tracker/2024/Line_tracker.ino)
+
+## Line Tracking · LEGO EV3 Follower
+
+A line-following program written in LEGO's EV3 visual programming environment. It uses the EV3's color/light sensor and built-in motor controllers to track a line using EV3's own logic blocks rather than a hand-tuned PID loop. It served as the team's entry in the **Mahdi Coding Competition (MC2)**.
+
+Source: [`ev3/Digitalfortresscode.ev3`](ev3/Digitalfortresscode.ev3)
+
+## Line Tracking · Achievements
+
+The **line tracking** programs in this repository were used in competition by DigitalFortressTeam:
+
+| Program | Competition | Category | Result |
+|---------|-------------|----------|--------|
+| EV3 follower (`ev3/`) | **MC2** — Mahdi Coding Competition | Line tracking | 🥉 **3rd place** |
+
+---
+
 ## Project Structure
 
 ```
-DF-main/
+DF-oss/
 ├── LICENSE                              # MIT license
 ├── README.md
 ├── Line_tracker/
 │   └── 2024/
-│       └── Line_tracker.ino             # PID line-follower firmware (2024)
-├── Sumo/
-│   └── 2024-2025/
-│       ├── components.xlsx              # Component list / BOM
-│       ├── Sumo strategies.xlsx         # Strategy design notes
-│       ├── sumo datasheets/             # Datasheets: sensors, motors, driver
-│       ├── Flowchart/                   # Design flowcharts (images)
-│       ├── PCB/                         # Altium schematics, PCB layout, Gerbers
-│       └── Sumolatest/                  # Active PlatformIO firmware
-│           ├── platformio.ini           # Build config: atmelavr, megaatmega2560,
-│           │                            #   Arduino framework, IRremote dep
-│           ├── .gitignore               # PlatformIO/IDE artifacts
-│           ├── .vscode/                 # Editor recommendations
-│           └── src/
-│               ├── main.cpp             # Entry point: setup(), loop(), control
-│               │                        #   state machine + advanced strategy states
-│               ├── strategies.h         # simple() / smart() strategy logic
-│               ├── functions.h          # Motion primitives, PWM smoothing
-│               │                        #   (MotionServerRun), helpers
-│               └── pins.h               # Pin map, sensor read variables, state
-│                                        #   constants, timer variables
-└── ev3 and vids/
-    ├── Digitalfortresscode.ev3          # LEGO EV3 program
-    └── *.mp4                            # Reference videos: sumo attack strategies
+│       └── Line_tracker.ino            # Arduino PID line-follower firmware
+├── ev3/
+│   └── Digitalfortresscode.ev3         # LEGO EV3 line-following program
+└── Sumo/
+    └── 2024-2025/
+        ├── components.xlsx              # Component list / BOM
+        ├── Sumo strategies.xlsx         # Strategy design notes
+        ├── sumo datasheets/             # Datasheets: sensors, motors, driver
+        ├── Flowchart/                   # Design flowcharts (images)
+        ├── PCB/                         # Altium schematics, PCB layout, Gerbers
+        └── Sumolatest/                  # Active PlatformIO firmware
+            ├── platformio.ini           # Build config: atmelavr, megaatmega2560,
+            │                            #   Arduino framework, IRremote dep
+            ├── .gitignore               # PlatformIO/IDE artifacts
+            ├── .vscode/                 # Editor recommendations
+            └── src/
+                ├── main.cpp             # Entry point: setup(), loop(), control
+                │                        #   state machine + advanced strategy states
+                ├── strategies.h         # simple() / smart() strategy logic
+                ├── functions.h          # Motion primitives, PWM smoothing
+                │                        #   (MotionServerRun), helpers
+                └── pins.h               # Pin map, sensor read variables, state
+                                        #   constants, timer variables
 ```
 
 ## Contributing & Credits
@@ -193,7 +315,7 @@ DF-main/
 ### Contributing (DigitalFortressTeam)
 
 1. Create a feature branch (`git checkout -b feature/[your-feature]`) and open a PR to `main`.
-2. Read the **Code Quality** section below before touching `Sumolatest/src/` — it lists known problems to avoid.
+2. Read the **Code Quality** section above before touching `Sumolatest/src/` — it lists known problems to avoid.
 3. Keep every strategy as a named state and document its transitions.
 4. Verify with `pio run` before pushing; don't merge build-breaking changes.
 5. Don't commit large binaries (videos, PCBs, spreadsheets) unless necessary.
@@ -204,7 +326,7 @@ DF-main/
 - **Libraries:** [z3t0/IRremote](https://github.com/z3t0/Arduino-IRremote) (IR reception), PlatformIO build system.
 - **License:** MIT — see [LICENSE](LICENSE).
 
-## Code Quality — Sumo (read this first)
+## Sumo · Code Quality (read this first)
 
 **The current Sumo code style is very bad and hard to read.** It works, but nobody should be expected to understand, debug, or extend it in this state. Before touching `Sumolatest/src/`, fix the issues below.
 
