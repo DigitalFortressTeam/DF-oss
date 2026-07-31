@@ -1,0 +1,23 @@
+name: Sync to DF-main-oss
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  sync-to-public-repo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout DF-main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push updates to DF-main-oss
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add oss https://x-access-token:${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}@github.com/DigitalFortressTeam/DF-main-oss.git
+          git push oss main:main --force
