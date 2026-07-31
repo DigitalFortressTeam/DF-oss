@@ -1,9 +1,6 @@
 name: Sync to DF-main-oss
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
