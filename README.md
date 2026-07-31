@@ -1,43 +1,210 @@
-# DigitalFortressTeam / Main Work boys
+# Main Work boys
 
-Repository for the Digital Fortress robotics team's competition work: line tracking, mini sumo, and EV3 experiments.
+> Competition firmware and design files for the **Digital Fortress mini sumo robot** — search, attack, and push the opponent out of the ring.
 
-## Repository structure
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Language](https://img.shields.io/badge/language-C%2B%2B11-informational.svg)
+![Platform](https://img.shields.io/badge/platform-Arduino%20Mega%202560-00979D.svg)
+![Framework](https://img.shields.io/badge/framework-PlatformIO-FF2D20.svg)
 
-| Path | Contents |
-|------|----------|
-| `Line_tracker/` | Arduino PID line-follower firmware (`Line_tracker.ino`). |
-| `Sumo/` | Mini sumo robot: source code, PCB design, datasheets, flowcharts, strategy notes. |
-| `ev3 and vids/` | LEGO EV3 program plus videos of sumo strategies. |
+---
 
-## Line tracker
+## Overview
 
-Arduino PID line follower for 2024. Sensor-based PID controller (Kp/Ki/Kd), differential motor outputs. Works standalone as a single `.ino`.
+`Main Work boys` is the working repository for DigitalFortressTeam's robotics competition projects, with the **mini sumo robot** as the primary focus. It also holds an older PID line follower and LEGO EV3 experiments.
 
-## Sumo
+The sumo bot is an autonomous fighting robot designed for mini sumo competitions: a 3-minute match on a 77 cm black ring where the first robot to push the other out wins.
 
-Mini sumo robot for the 2024-2025 season, built around an Arduino Mega 2650 Pro, developed in PlatformIO.
+**How it works:** an IR remote control (Panasonic protocol) selects one of five attack strategies (or a cleaning mode) before the match. Once started, the robot searches for the opponent with IR proximity sensors, attacks, and recovers from the ring edge using ground sensors.
 
-- **Firmware:** `Sumo/2024-2025/Sumolatest/` — PlatformIO project (`src/`, `platformio.ini`).
-- **Control:** Panasonic-format IR remote picks a strategy; the robot then plays a search/attack state machine on the ring.
-- **Hardware:** PCB Gerbers/schematics in `Sumo/2024-2025/PCB/`, component list and datasheets in `Sumo/2024-2025/`.
-- **Design docs:** flowcharts and strategy spreadsheets under `Sumo/2024-2025/`.
+### Core architecture
 
-### Building & Flashing (Sumo)
+The firmware is built around three cooperating state machines:
+
+```
+┌─────────────────────────────┐
+│  controlstate  (main.cpp)   │  Waiting → ACTIVE → STOP (match lifecycle,
+│  IR remote handling         │  strategy selection, LED feedback)
+└──────────────┬──────────────┘
+               │
+┌──────────────▼──────────────┐
+│  mainState    (main.cpp)    │  Advanced strategy phases:
+│  search / attack / grounded │  first search → tornado search →
+│  state machine              │  direct attack → slow rotate → recovery
+└──────────────┬──────────────┘
+               │
+┌──────────────▼──────────────┐
+│  motion layer (functions.h) │  move/rotate primitives, exponential
+│  PWM smoothing + differential│  PWM smoothing (MotionServerRun),
+│  drive (128-centered)        │  millis()-based timing
+└─────────────────────────────┘
+```
+
+- Sensors are read every loop (`readsesnors()`); state transitions react on the same tick.
+- Motor output uses a **128-centered differential-drive PWM scheme**: `128` = stop, `>128` = forward, `<128` = reverse.
+- The `MotionServerRun()` filter smoothly ramps PWM targets to reduce mechanical shock.
+
+## Key Features
+
+- **Remote strategy selection** — Panasonic IR remote picks one of 5 strategies or cleaning mode; LED blink feedback confirms the choice.
+- **Remote start/stop** — start the match and stop the robot without touching it.
+- **Multi-phase attack state machine** — first search, tornado (spinning) search, direct attack, slow rotation, and ring-edge recovery all handled in one loop.
+- **Opponent detection** — 4 IR proximity sensors (front-left, front-right, left, right) with `INPUT_PULLUP` (active-low) wiring.
+- **Ring-edge (ground) detection** — 4 ground sensors detect the white ring border so the robot corrects itself back into the ring.
+- **Smooth motion control** — exponential filter on PWM targets prevents jerky starts and direction changes.
+- **Non-blocking timing** — `millis()`-based state timers (except a few remaining `delay()` calls; see Code Quality section).
+- **Clean PlatformIO project** — dependency resolution via `lib_deps` (IRremote), single-command build and upload.
+
+## Prerequisites & Tech Stack
+
+| Component | Requirement |
+|-----------|-------------|
+| OS | Linux, macOS, or Windows |
+| PlatformIO Core | ≥ 6.x (standalone CLI or VS Code extension) |
+| Board | Arduino Mega 2560 / Mega 2560 Pro (ATmega2560) |
+| Framework | Arduino (`platformio.ini`: `atmelavr` / `megaatmega2560`) |
+| Libraries | `z3t0/IRremote@^4.4.2` (resolved automatically by PlatformIO) |
+| Sensors | 4× IR proximity sensors, 4× ground (ring-edge) sensors |
+| Actuators | 2× DC motors + dual motor driver (PWM + enable pins) |
+| Remote | IR remote using the Panasonic protocol |
+
+**Repository-wide (sibling projects):**
+
+| Project | Stack |
+|---------|-------|
+| `Line_tracker/` | Arduino (`Line_tracker.ino`), PID controller |
+| `ev3 and vids/` | LEGO EV3, reference strategy videos |
+
+## Installation & Setup
+
+### 1. Clone the repository
 
 ```bash
-cd Sumo/2024-2025/Sumolatest
+git clone https://github.com/DigitalFortressTeam/Main-Work-boys.git
+cd "Main-Work-boys/Sumo/2024-2025/Sumolatest"
+```
 
-# Build project
+### 2. Build the firmware
+
+```bash
 pio run
+```
 
-# Upload to Arduino Mega 2560 Pro
+### 3. Flash to the board
+
+Connect the Mega 2560 Pro over USB, then:
+
+```bash
 pio run --target upload
 ```
 
-> **Note on code quality:** The Sumo firmware currently has serious readability and maintainability problems. Read the section below before working on it.
+If the board is not auto-detected (e.g. multiple serial devices), specify the port:
 
-## Code style — Sumo (read this first)
+```bash
+pio run --target upload --upload-port [your-port]
+# Linux example: /dev/ttyUSB0
+# Windows example: COM3
+```
+
+> **Linux note:** if upload fails with a permission error, add your user to the `dialout` group (`sudo usermod -aG dialout [your-username]`) and log out/in.
+
+### 4. (Optional) IDE setup
+
+Install the [PlatformIO IDE](https://platformio.org/install/ide?install=vscode) extension in VS Code. The project already recommends it in `.vscode/extensions.json`.
+
+## Usage Guide
+
+### Match procedure
+
+1. Power on the robot — the serial console prints `TURTLE LOADING UP` (9600 baud).
+2. Point the IR remote at the receiver and press a **strategy key** (see table). The built-in LED blinks once per selection.
+3. Press **Start** (0x87) — the match begins.
+4. Press **Stop** (0x89) at any time — motors halt and the robot returns to `Waiting`.
+
+### IR remote commands
+
+| Command | Action |
+|---------|--------|
+| `0x10` | Strategy 1 |
+| `0x11` | Strategy 2 |
+| `0x12` | Strategy 3 |
+| `0x13` | Strategy 4 |
+| `0x14` | Strategy 5 |
+| `0x81` | Cleaning mode |
+| `0x87` | Start match (LED holds if no strategy selected) |
+| `0x89` | Stop match / reset to waiting state |
+
+### Serial monitor
+
+```bash
+pio device monitor -b 9600
+```
+
+Prints sensor status on every loop — useful for tuning sensor thresholds.
+
+### Pin map (firmware defaults, `src/pins.h`)
+
+| Pin | Function | Pin | Function |
+|-----|----------|-----|----------|
+| 7 | Motor L enable | A7 | IR sensor, left |
+| 9 | Motor R enable | 16 | IR sensor, right |
+| 11 | Motor L PWM | 25 | IR sensor, front-right |
+| 12 | Motor R PWM | A1 | IR sensor, front-left |
+| 13 | Buzzer | 15 | Ground sensor, back-left |
+| 10 | Ground sensor, front-left | A15 | Ground sensor, back-right |
+| 14 | Ground sensor, front-right | — | — |
+
+## Project Structure
+
+```
+Main-Work-boys/
+├── LICENSE                              # MIT license
+├── README.md
+├── Line_tracker/
+│   └── 2024/
+│       └── Line_tracker.ino             # PID line-follower firmware (2024)
+├── Sumo/
+│   └── 2024-2025/
+│       ├── components.xlsx              # Component list / BOM
+│       ├── Sumo strategies.xlsx         # Strategy design notes
+│       ├── sumo datasheets/             # Datasheets: sensors, motors, driver
+│       ├── Flowchart/                   # Design flowcharts (images)
+│       ├── PCB/                         # Altium schematics, PCB layout, Gerbers
+│       └── Sumolatest/                  # Active PlatformIO firmware
+│           ├── platformio.ini           # Build config: atmelavr, megaatmega2560,
+│           │                            #   Arduino framework, IRremote dep
+│           ├── .gitignore               # PlatformIO/IDE artifacts
+│           ├── .vscode/                 # Editor recommendations
+│           └── src/
+│               ├── main.cpp             # Entry point: setup(), loop(), control
+│               │                        #   state machine + advanced strategy states
+│               ├── strategies.h         # simple() / smart() strategy logic
+│               ├── functions.h          # Motion primitives, PWM smoothing
+│               │                        #   (MotionServerRun), helpers
+│               └── pins.h               # Pin map, sensor read variables, state
+│                                        #   constants, timer variables
+└── ev3 and vids/
+    ├── Digitalfortresscode.ev3          # LEGO EV3 program
+    └── *.mp4                            # Reference videos: sumo attack strategies
+```
+
+## Contributing & Credits
+
+### Contributing (DigitalFortressTeam)
+
+1. Create a feature branch (`git checkout -b feature/[your-feature]`) and open a PR to `main`.
+2. Read the **Code Quality** section below before touching `Sumolatest/src/` — it lists known problems to avoid.
+3. Keep every strategy as a named state and document its transitions.
+4. Verify with `pio run` before pushing; don't merge build-breaking changes.
+5. Don't commit large binaries (videos, PCBs, spreadsheets) unless necessary.
+
+### Credits
+
+- **Team:** DigitalFortressTeam — firmware, hardware (PCB), and strategy design.
+- **Libraries:** [z3t0/IRremote](https://github.com/z3t0/Arduino-IRremote) (IR reception), PlatformIO build system.
+- **License:** MIT — see [LICENSE](LICENSE).
+
+## Code Quality — Sumo (read this first)
 
 **The current Sumo code style is very bad and hard to read.** It works, but nobody should be expected to understand, debug, or extend it in this state. Before touching `Sumolatest/src/`, fix the issues below.
 
@@ -72,12 +239,6 @@ pio run --target upload
 9. **Document the state machine** — one short diagram or a block comment per state would help enormously.
 
 The hardware and strategy design here are solid. The code just needs a readability pass to match.
-
-## Contributing
-
-- Follow the recommended fixes above: readable names, no magic numbers, no dead code, no blocking delays.
-- Keep every strategy as a named state and document transitions.
-- Test firmware builds with `pio run` before committing.
 
 ## License
 
