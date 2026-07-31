@@ -1,4 +1,4 @@
-# Main Work boys
+# DF-main
 
 > Competition firmware and design files for the **Digital Fortress mini sumo robot** — search, attack, and push the opponent out of the ring.
 
@@ -11,7 +11,7 @@
 
 ## Overview
 
-`Main Work boys` is the working repository for DigitalFortressTeam's robotics competition projects, with the **mini sumo robot** as the primary focus. It also holds an older PID line follower and LEGO EV3 experiments.
+`DF-main` is the working repository for DigitalFortressTeam's robotics competition projects, with the **mini sumo robot** as the primary focus. It also holds an older PID line follower and LEGO EV3 experiments.
 
 The sumo bot is an autonomous fighting robot designed for mini sumo competitions: a 3-minute match on a 77 cm black ring where the first robot to push the other out wins.
 
@@ -80,8 +80,8 @@ The firmware is built around three cooperating state machines:
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/DigitalFortressTeam/Main-Work-boys.git
-cd "Main-Work-boys/Sumo/2024-2025/Sumolatest"
+git clone https://github.com/DigitalFortressTeam/DF-main.git
+cd "DF-main/Sumo/2024-2025/Sumolatest"
 ```
 
 ### 2. Build the firmware
@@ -157,7 +157,7 @@ Prints sensor status on every loop — useful for tuning sensor thresholds.
 ## Project Structure
 
 ```
-Main-Work-boys/
+DF-main/
 ├── LICENSE                              # MIT license
 ├── README.md
 ├── Line_tracker/
