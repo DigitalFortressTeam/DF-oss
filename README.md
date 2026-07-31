@@ -8,6 +8,16 @@
 
 ---
 
+## 🏆 Competition Achievements
+
+| Category | Competition | Award / Result | Code / System |
+|----------|-------------|----------------|---------------|
+| **Sumo** | **ARC9** (Annual Robotics Competition) | 🥈 **2nd Place** | [`Sumo/2024-2025/Sumolatest/`](Sumo/2024-2025/Sumolatest/) |
+| **Sumo** | **ARC10** (Annual Robotics Competition) | 🏅 **Best Programming Rank** | [`Sumo/2024-2025/Sumolatest/`](Sumo/2024-2025/Sumolatest/) |
+| **Line Tracking** | **MC2** (Mahdi Coding Competition) | 🥉 **3rd Place** | [`ev3/Digitalfortresscode.ev3`](ev3/Digitalfortresscode.ev3) |
+
+---
+
 ## Table of Contents
 
 - [Sumo](#sumo)
