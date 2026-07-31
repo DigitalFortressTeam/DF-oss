@@ -74,22 +74,22 @@ Power on → Waiting (select strategy via IR) → START pressed
 The firmware is built around three cooperating state machines:
 
 ```
-┌─────────────────────────────┐
-│  controlstate  (main.cpp)   │  Waiting → ACTIVE → STOP (match lifecycle,
-│  IR remote handling         │  strategy selection, LED feedback)
-└──────────────┬──────────────┘
+┌──────────────────────────────┐
+│  controlstate  (main.cpp)    │  Waiting → ACTIVE → STOP (match lifecycle,
+│  IR remote handling          │  strategy selection, LED feedback)
+└──────────────┬───────────────┘
                │
-┌──────────────▼──────────────┐
-│  mainState    (main.cpp)    │  Advanced strategy phases:
-│  search / attack / grounded │  first search → tornado search →
-│  state machine              │  direct attack → slow rotate → recovery
-└──────────────┬──────────────┘
+┌──────────────▼───────────────┐
+│  mainState    (main.cpp)     │  Advanced strategy phases:
+│  search / attack / grounded  │  first search → tornado search →
+│  state machine               │  direct attack → slow rotate → recovery
+└──────────────┬───────────────┘
                │
-┌──────────────▼──────────────┐
-│  motion layer (functions.h) │  move/rotate primitives, exponential
+┌──────────────▼───────────────┐
+│  motion layer (functions.h)  │  move/rotate primitives, exponential
 │  PWM smoothing + differential│  PWM smoothing (MotionServerRun),
 │  drive (128-centered)        │  millis()-based timing
-└─────────────────────────────┘
+└──────────────────────────────┘
 ```
 
 - Sensors are read every loop (`readsesnors()`); state transitions react on the same tick.
