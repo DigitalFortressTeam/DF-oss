@@ -23,6 +23,18 @@ Mini sumo robot for the 2024-2025 season, built around an Arduino Mega 2650 Pro,
 - **Hardware:** PCB Gerbers/schematics in `Sumo/2024-2025/PCB/`, component list and datasheets in `Sumo/2024-2025/`.
 - **Design docs:** flowcharts and strategy spreadsheets under `Sumo/2024-2025/`.
 
+### Building & Flashing (Sumo)
+
+```bash
+cd Sumo/2024-2025/Sumolatest
+
+# Build project
+pio run
+
+# Upload to Arduino Mega 2560 Pro
+pio run --target upload
+```
+
 > **Note on code quality:** The Sumo firmware currently has serious readability and maintainability problems. Read the section below before working on it.
 
 ## Code style — Sumo (read this first)
