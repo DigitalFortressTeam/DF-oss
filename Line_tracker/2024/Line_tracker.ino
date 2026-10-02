@@ -5,21 +5,21 @@
 // Pins
 // ---------------------------------------------------------------------------
 // Motors
-const byte RIGHT_MOTOR_PIN = 4;
-const byte LEFT_MOTOR_PIN = 5;
+constexpr byte RIGHT_MOTOR_PIN = 4;
+constexpr byte LEFT_MOTOR_PIN = 5;
 
 // Close sensors (used by the PID)
-const byte RIGHT_SENSOR_PIN = A1;
-const byte LEFT_SENSOR_PIN = A2;
+constexpr byte RIGHT_SENSOR_PIN = A1;
+constexpr byte LEFT_SENSOR_PIN = A2;
 
 // Wide sensors (used for full turns)
-const byte WIDE_RIGHT_SENSOR_PIN = 6;
-const byte WIDE_LEFT_SENSOR_PIN = 7;
+constexpr byte WIDE_RIGHT_SENSOR_PIN = 6;
+constexpr byte WIDE_LEFT_SENSOR_PIN = 7;
 
 // ---------------------------------------------------------------------------
 // Speed
 // ---------------------------------------------------------------------------
-const float BASE_SPEED = 255;
+constexpr float BASE_SPEED = 255;
 float leftMotorSpeed, rightMotorSpeed;
 float speedDifference;
 
@@ -27,9 +27,9 @@ float speedDifference;
 // PID
 // ---------------------------------------------------------------------------
 // Constants
-const float KP = 0.7;
-const float KI = 0.001;
-const float KD = 14;
+constexpr float KP = 0.7;
+constexpr float KI = 0.001;
+constexpr float KD = 14;
 
 // Variables
 float derivative, error, lastError, integral = 0;
@@ -47,11 +47,11 @@ int leftSensorReading;
 // ---------------------------------------------------------------------------
 // Full turns
 // ---------------------------------------------------------------------------
-const int FULL_TURN_ON_TRACK_THRESHOLD = 100;
-const int FULL_TURN_KICK_MOTOR_SPEED = 255;
-const int FULL_TURN_KICK_DURATION_MS = 50;
+constexpr int FULL_TURN_ON_TRACK_THRESHOLD = 100;
+constexpr int FULL_TURN_KICK_MOTOR_SPEED = 255;
+constexpr int FULL_TURN_KICK_DURATION_MS = 50;
 
-const int PID_LOOP_DELAY_MS = 5;
+constexpr int PID_LOOP_DELAY_MS = 5;
 
 // Steers the robot by comparing both close sensors.
 void applyPidSteering(int rightSensorValue, int leftSensorValue) {
