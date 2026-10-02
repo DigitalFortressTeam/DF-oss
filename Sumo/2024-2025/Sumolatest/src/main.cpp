@@ -2,739 +2,758 @@
 #include <IRremote.h>
 #include "strategies.h"
 
-// put function declarations here:
-void configTimer1()
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const long SERIAL_BAUD_RATE = 9600;
+
+// Timer1 prescaler (clock select bits CS12:CS10 of TCCR1B). Timer1 generates the PWM
+// on pins 11 and 12 (the motor PWM pins); the prescaler value sets the PWM frequency.
+const int TIMER1_CLOCK_SELECT_MASK = 0b111;
+const int TIMER1_PRESCALER_DIVIDE_BY_8 = 2;
+
+// Panasonic IR remote commands
+const int IR_COMMAND_SELECT_STRATEGY_1 = 0x10;
+const int IR_COMMAND_SELECT_STRATEGY_2 = 0x11;
+const int IR_COMMAND_SELECT_STRATEGY_3 = 0x12;
+const int IR_COMMAND_SELECT_STRATEGY_4 = 0x13;
+const int IR_COMMAND_SELECT_STRATEGY_5 = 0x14;
+const int IR_COMMAND_SELECT_CLEANING = 0x81;
+const int IR_COMMAND_START = 0x87;
+const int IR_COMMAND_STOP = 0x89;
+
+// Status LED feedback
+const unsigned long LED_START_REJECTED_MS = 1000;
+const unsigned long LED_STOP_MS = 2000;
+
+// Motor speeds (PWM; 128 is neutral, see functions.h)
+const int FULL_SPEED_PWM = 252;
+const int TORNADO_SPIN_PWM = 180;
+const int SLOW_ROTATE_PWM = 170;
+const int CLEANER_BACKWARD_PWM = 70;
+const int FIRST_SEARCH_2_TURN_DIFFERENCE = 80;
+const int DIRECT_ATTACK_TURN_DIFFERENCE = 60;
+// Grounded maneuver: both wheels reverse (below 128), one faster than the other.
+const int GROUNDED_SLOW_WHEEL_PWM = 30;
+const int GROUNDED_FAST_WHEEL_PWM = 70;
+
+// How long each timed state lasts
+const unsigned long FIRST_SEARCH_1_SPIN_DURATION_MS = 100;
+const unsigned long FIRST_SEARCH_1_CENTER_DURATION_MS = 500;
+const unsigned long FIRST_SEARCH_2_DURATION_MS = 700;
+const unsigned long GROUNDED_DURATION_MS = 600;
+
+// Motor filter settings passed to updateMotors()
+const unsigned long SEARCH_FILTER_PERIOD_MS = 20;
+const float SEARCH_FILTER_RATIO = 0.06;
+const float ATTACK_FILTER_RATIO = 0.05;
+
+// ---------------------------------------------------------------------------
+// Setup helpers
+// ---------------------------------------------------------------------------
+void configureTimer1Prescaler()
 {
-  int eraser = 0b111;
-  TCCR1B &= ~eraser;
-  int myPrescaler = 2;
-  TCCR1B |= myPrescaler;
+  int clockSelectMask = TIMER1_CLOCK_SELECT_MASK;
+  TCCR1B &= ~clockSelectMask;
+  int prescaler = TIMER1_PRESCALER_DIVIDE_BY_8;
+  TCCR1B |= prescaler;
 }
 
+// ---------------------------------------------------------------------------
+// Control state handlers
+// ---------------------------------------------------------------------------
+
+// Waiting: the remote picks a strategy (blinking the LED to confirm) and starts the fight.
+void handleWaitingState()
+{
+  if (IrReceiver.decode())
+  {
+    // IrReceiver.printIRResultShort(&Serial);
+
+    if (IrReceiver.decodedIRData.protocol == PANASONIC)
+    {
+      switch (IrReceiver.decodedIRData.command)
+      {
+      case IR_COMMAND_SELECT_STRATEGY_1:
+        lastMotorFilterUpdateMs = millis();
+        selectedStrategy = STRATEGY_1;
+        blinkStatusLed(1);
+        //  mainState = MAIN_STATE_FIRST_SEARCH_1_RIGHT;
+        break;
+      case IR_COMMAND_SELECT_STRATEGY_2:
+        selectedStrategy = STRATEGY_2;
+        blinkStatusLed(2);
+        // mainState = MAIN_STATE_FIRST_SEARCH_1_CENTER;
+        break;
+      case IR_COMMAND_SELECT_STRATEGY_3:
+        selectedStrategy = STRATEGY_3;
+        blinkStatusLed(3);
+        // mainState = MAIN_STATE_FIRST_SEARCH_1_LEFT;
+        break;
+      case IR_COMMAND_SELECT_STRATEGY_4:
+        selectedStrategy = STRATEGY_4;
+        break;
+      case IR_COMMAND_SELECT_STRATEGY_5:
+        selectedStrategy = STRATEGY_5;
+        break;
+      case IR_COMMAND_SELECT_CLEANING:
+        selectedStrategy = STRATEGY_CLEANING;
+        break;
+      case IR_COMMAND_START:
+        if (selectedStrategy == STRATEGY_NONE)
+        {
+          // No strategy selected yet: refuse to start.
+          pulseStatusLed(LED_START_REJECTED_MS);
+        }
+        else
+        {
+          controlState = CONTROL_ACTIVE;
+          robotState = ROBOT_STATE_START;
+          mainState = MAIN_STATE_START;
+        }
+        break;
+      }
+    }
+
+    IrReceiver.resume();
+  }
+}
+
+// Stop: halt the motors, forget the selected strategy and go back to waiting.
+void handleStopState()
+{
+  selectedStrategy = STRATEGY_NONE;
+  stopMotorsNow();
+  pulseStatusLed(LED_STOP_MS);
+  resetAllValues();
+  controlState = CONTROL_WAITING;
+}
+
+// ---------------------------------------------------------------------------
+// Main state handlers (run every loop while the control state is CONTROL_ACTIVE)
+// ---------------------------------------------------------------------------
+
+// Shared by most search/attack states: if a front ground sensor triggers, switch to
+// the matching GROUNDED state. Returns true when the state was changed.
+bool enterGroundedStateIfEdgeDetected()
+{
+  if (groundFrontRightReading == GROUND_DETECTED)
+  {
+    mainState = MAIN_STATE_GROUNDED_RIGHT;
+    groundedStartMs = millis();
+    return true;
+  }
+  else if (groundFrontLeftReading == GROUND_DETECTED)
+  {
+    mainState = MAIN_STATE_GROUNDED_LEFT;
+    groundedStartMs = millis();
+    return true;
+  }
+  return false;
+}
+
+// Start: pick the opening move for the selected strategy (or start cleaning).
+void runStartState()
+{
+  if (selectedStrategy == STRATEGY_CLEANING)
+  {
+
+    mainState = MAIN_STATE_CLEANER;
+    return;
+  }
+  startCountdown();
+  currentTimeMs = millis();
+  firstSearchPhase1StartMs = millis();
+  if (selectedStrategy == STRATEGY_1)
+  {
+    mainState = MAIN_STATE_FIRST_SEARCH_1_LEFT;
+  }
+  else if (selectedStrategy == STRATEGY_2)
+  {
+    mainState = MAIN_STATE_FIRST_SEARCH_1_CENTER;
+  }
+  else if (selectedStrategy == STRATEGY_3)
+  {
+    mainState = MAIN_STATE_FIRST_SEARCH_1_RIGHT;
+  }
+}
+
+// First search, phase 1 (left): spin left for a short burst.
+void runFirstSearch1Left()
+{
+  // actions
+  rotateLeft(FULL_SPEED_PWM, false);
+  // transitions
+  if (currentTimeMs - firstSearchPhase1StartMs >= FIRST_SEARCH_1_SPIN_DURATION_MS)
+  {
+    mainState = MAIN_STATE_FIRST_SEARCH_2_LEFT;
+    firstSearchPhase2StartMs = millis();
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED || irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_RIGHT;
+    tornadoSearchStartMs = millis();
+  }
+  else if (irRightReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_RIGHT;
+    rotationStartMs = millis();
+  }
+  else if (irLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_LEFT;
+    rotationStartMs = millis();
+  }
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// First search, phase 1 (right): spin right for a short burst.
+void runFirstSearch1Right()
+{
+  // actions
+  rotateRight(FULL_SPEED_PWM, false);
+  // transitions
+  if (currentTimeMs - firstSearchPhase1StartMs >= FIRST_SEARCH_1_SPIN_DURATION_MS)
+  {
+    mainState = MAIN_STATE_FIRST_SEARCH_2_RIGHT;
+    firstSearchPhase2StartMs = millis();
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED || irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_LEFT;
+    tornadoSearchStartMs = millis();
+  }
+  else if (irRightReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_RIGHT;
+    rotationStartMs = millis();
+  }
+  else if (irLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_LEFT;
+    rotationStartMs = millis();
+  }
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// First search, phase 1 (center): drive straight ahead.
+void runFirstSearch1Center()
+{
+  // actions
+  driveForward(FULL_SPEED_PWM, false);
+  // transitions
+  if (enterGroundedStateIfEdgeDetected())
+  {
+    return;
+  }
+  if (currentTimeMs - firstSearchPhase1StartMs >= FIRST_SEARCH_1_CENTER_DURATION_MS)
+  {
+
+    mainState = MAIN_STATE_TORNADO_SEARCH_RIGHT;
+    tornadoSearchStartMs = millis();
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED || irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_LEFT;
+    tornadoSearchStartMs = millis();
+  }
+  else if (irRightReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_RIGHT;
+    rotationStartMs = millis();
+  }
+  else if (irLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_LEFT;
+    rotationStartMs = millis();
+  }
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// First search, phase 2 (left): curve right.
+void runFirstSearch2Left()
+{
+  // actions
+  turnRight(FULL_SPEED_PWM, FIRST_SEARCH_2_TURN_DIFFERENCE, false);
+  // transitions
+  if (enterGroundedStateIfEdgeDetected())
+  {
+    return;
+  }
+  if (currentTimeMs - firstSearchPhase2StartMs >= FIRST_SEARCH_2_DURATION_MS)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_RIGHT;
+    tornadoSearchStartMs = millis();
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED || irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_RIGHT;
+    tornadoSearchStartMs = millis();
+  }
+  else if (irRightReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_RIGHT;
+    rotationStartMs = millis();
+  }
+  else if (irLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_LEFT;
+    rotationStartMs = millis();
+  }
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// First search, phase 2 (right): curve left.
+void runFirstSearch2Right()
+{
+  // actions
+  turnLeft(FULL_SPEED_PWM, FIRST_SEARCH_2_TURN_DIFFERENCE, false);
+  // transitions
+  if (enterGroundedStateIfEdgeDetected())
+  {
+    return;
+  }
+  if (currentTimeMs - firstSearchPhase2StartMs >= FIRST_SEARCH_2_DURATION_MS)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_LEFT;
+    tornadoSearchStartMs = millis();
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED || irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_LEFT;
+    tornadoSearchStartMs = millis();
+  }
+  else if (irRightReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_RIGHT;
+    rotationStartMs = millis();
+  }
+  else if (irLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_LEFT;
+    rotationStartMs = millis();
+  }
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// Tornado search (right): spin right on the spot until an opponent shows up.
+void runTornadoSearchRight()
+{
+
+  // actions
+  rotateRight(TORNADO_SPIN_PWM, true);
+  // transitions
+  if (enterGroundedStateIfEdgeDetected())
+  {
+    return;
+  }
+  if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_FORWARD;
+    randomSearchStep2StartMs = millis();
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_RIGHT;
+  }
+  else if (irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_LEFT;
+  }
+  else if (irRightReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_RIGHT;
+  }
+  else if (irLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_ROTATE_SLOWLY_LEFT;
+  }
+  // if (currentTimeMs - tornadoSearchStartMs >= 2000)
+  // {
+  //   mainState = MAIN_STATE_RANDOM_SEARCH_STEP_1;
+  //   randomSearchStep2StartMs = millis();
+  //   controlState = CONTROL_STOP;
+  // }
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// Tornado search (left): spin left on the spot until an opponent shows up.
+void runTornadoSearchLeft()
+{
+  // actions
+  rotateLeft(TORNADO_SPIN_PWM, true);
+  // transitions
+  if (enterGroundedStateIfEdgeDetected())
+  {
+    return;
+  }
+  if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_FORWARD;
+    randomSearchStep2StartMs = millis();
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_RIGHT;
+  }
+  else if (irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_LEFT;
+  }
+  else if (irRightReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_ROTATE_SLOWLY_RIGHT;
+  }
+  else if (irLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_ROTATE_SLOWLY_LEFT;
+  }
+  // else if (currentTimeMs - tornadoSearchStartMs >= 2000)
+  // {
+  //   mainState = MAIN_STATE_RANDOM_SEARCH_STEP_1;
+  //   randomSearchStep1StartMs = millis();
+  //   controlState = CONTROL_STOP;
+  // }
+
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// Placeholder: this state is not implemented yet, it only keeps the motors updating.
+void runUnimplementedState()
+{
+  // actions
+
+  // transitions
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// Direct attack (forward): both front sensors see the opponent, push straight ahead.
+void runDirectAttackForward()
+{
+  // actions
+  driveForward(FULL_SPEED_PWM, false);
+  // transitions
+  if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_DIRECT_ATTACK_FORWARD;
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_DIRECT_ATTACK_RIGHT;
+  }
+  else if (irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_DIRECT_ATTACK_LEFT;
+  }
+  else if (irFrontRightReading == NO_OPPONENT && irFrontLeftReading == NO_OPPONENT)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_RIGHT;
+  }
+  updateMotors(SEARCH_FILTER_PERIOD_MS, ATTACK_FILTER_RATIO);
+}
+
+// Direct attack (left): opponent is front-left, curve left toward it.
+void runDirectAttackLeft()
+{
+  // actions
+  turnLeft(FULL_SPEED_PWM, DIRECT_ATTACK_TURN_DIFFERENCE, false);
+  // transitions
+  if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_DIRECT_ATTACK_FORWARD;
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_DIRECT_ATTACK_RIGHT;
+  }
+  else if (irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_DIRECT_ATTACK_LEFT;
+  }
+  else if (irFrontRightReading == NO_OPPONENT && irFrontLeftReading == NO_OPPONENT)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_LEFT;
+    tornadoSearchStartMs = millis();
+  }
+  updateMotors(SEARCH_FILTER_PERIOD_MS, ATTACK_FILTER_RATIO);
+}
+
+// Direct attack (right): opponent is front-right, curve right toward it.
+void runDirectAttackRight()
+{
+  // actions
+  turnRight(FULL_SPEED_PWM, DIRECT_ATTACK_TURN_DIFFERENCE, false);
+  // transitions
+  if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_DIRECT_ATTACK_FORWARD;
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_DIRECT_ATTACK_RIGHT;
+  }
+  else if (irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    mainState = MAIN_STATE_DIRECT_ATTACK_LEFT;
+  }
+  else if (irFrontRightReading == NO_OPPONENT && irFrontLeftReading == NO_OPPONENT)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_RIGHT;
+    tornadoSearchStartMs = millis();
+  }
+  updateMotors(SEARCH_FILTER_PERIOD_MS, ATTACK_FILTER_RATIO);
+}
+
+// Rotate slowly (right): opponent seen on the right side, turn toward it.
+void runRotateSlowlyRight()
+{
+  // actions
+  rotateRight(SLOW_ROTATE_PWM, true);
+  // transitions
+  if (enterGroundedStateIfEdgeDetected())
+  {
+    return;
+  }
+  if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_FORWARD;
+    randomSearchStep2StartMs = millis();
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_RIGHT;
+  }
+  else if (irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_LEFT;
+  }
+  // Deliberately a separate "if" (not "else if"): this can override the state chosen above.
+  if (irLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_ROTATE_SLOWLY_LEFT;
+    rotationStartMs = millis();
+  }
+
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// Rotate slowly (left): opponent seen on the left side, turn toward it.
+void runRotateSlowlyLeft()
+{
+  // actions
+  rotateLeft(SLOW_ROTATE_PWM, true);
+  // transitions
+  if (enterGroundedStateIfEdgeDetected())
+  {
+    return;
+  }
+  if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_FORWARD;
+    randomSearchStep2StartMs = millis();
+  }
+  else if (irFrontRightReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_RIGHT;
+  }
+  else if (irFrontLeftReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_DIRECT_ATTACK_LEFT;
+  }
+  // Deliberately a separate "if" (not "else if"): this can override the state chosen above.
+  if (irRightReading == OPPONENT_DETECTED)
+  {
+    stopMotorsNow();
+    mainState = MAIN_STATE_ROTATE_SLOWLY_RIGHT;
+    rotationStartMs = millis();
+  }
+
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// Grounded (right): the front-right ground sensor fired, back away, then resume searching.
+void runGroundedRight()
+{
+  // actions
+  setMotorsInstantly(GROUNDED_SLOW_WHEEL_PWM, GROUNDED_FAST_WHEEL_PWM);
+  // transitions
+  if (currentTimeMs - groundedStartMs >= GROUNDED_DURATION_MS)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_RIGHT;
+    tornadoSearchStartMs = millis();
+  }
+
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// Grounded (left): the front-left ground sensor fired, back away, then resume searching.
+void runGroundedLeft()
+{
+  // actions
+  setMotorsInstantly(GROUNDED_FAST_WHEEL_PWM, GROUNDED_SLOW_WHEEL_PWM);
+  // transitions
+  if (currentTimeMs - groundedStartMs >= GROUNDED_DURATION_MS)
+  {
+    mainState = MAIN_STATE_TORNADO_SEARCH_LEFT;
+    tornadoSearchStartMs = millis();
+  }
+
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// Cleaner: just reverse (selected with the cleaning command).
+void runCleaner()
+{
+  // actions
+  driveBackward(CLEANER_BACKWARD_PWM, false);
+  // transitions
+
+  updateMotors(SEARCH_FILTER_PERIOD_MS, SEARCH_FILTER_RATIO);
+}
+
+// Active: listen for the stop command, then run the current main state.
+void handleActiveState()
+{
+  if (IrReceiver.decode())
+  {
+    // IrReceiver.printIRResultShort(&Serial);
+
+    if (IrReceiver.decodedIRData.protocol == PANASONIC)
+    {
+
+      if (IrReceiver.decodedIRData.command == IR_COMMAND_STOP)
+      {
+        controlState = CONTROL_STOP;
+      }
+    }
+
+    IrReceiver.resume();
+  }
+  switch (mainState)
+  {
+  case MAIN_STATE_START:
+    runStartState();
+    break;
+
+  case MAIN_STATE_FIRST_SEARCH_1_LEFT:
+    runFirstSearch1Left();
+    break;
+  case MAIN_STATE_FIRST_SEARCH_1_RIGHT:
+    runFirstSearch1Right();
+    break;
+  case MAIN_STATE_FIRST_SEARCH_1_CENTER:
+    runFirstSearch1Center();
+    break;
+
+  case MAIN_STATE_FIRST_SEARCH_2_LEFT:
+    runFirstSearch2Left();
+    break;
+  case MAIN_STATE_FIRST_SEARCH_2_RIGHT:
+    runFirstSearch2Right();
+    break;
+
+  case MAIN_STATE_TORNADO_SEARCH_RIGHT:
+    runTornadoSearchRight();
+    break;
+  case MAIN_STATE_TORNADO_SEARCH_LEFT:
+    runTornadoSearchLeft();
+    break;
+
+  case MAIN_STATE_RANDOM_SEARCH_STEP_1:
+  case MAIN_STATE_RANDOM_SEARCH_STEP_2:
+  case MAIN_STATE_APPROACH_STEP_1:
+  case MAIN_STATE_APPROACH_STEP_2:
+    runUnimplementedState();
+    break;
+
+  case MAIN_STATE_DIRECT_ATTACK_FORWARD:
+    runDirectAttackForward();
+    break;
+  case MAIN_STATE_DIRECT_ATTACK_LEFT:
+    runDirectAttackLeft();
+    break;
+  case MAIN_STATE_DIRECT_ATTACK_RIGHT:
+    runDirectAttackRight();
+    break;
+
+  case MAIN_STATE_ROTATE_SLOWLY_RIGHT:
+    runRotateSlowlyRight();
+    break;
+  case MAIN_STATE_ROTATE_SLOWLY_LEFT:
+    runRotateSlowlyLeft();
+    break;
+
+  case MAIN_STATE_GROUNDED_RIGHT:
+    runGroundedRight();
+    break;
+  case MAIN_STATE_GROUNDED_LEFT:
+    runGroundedLeft();
+    break;
+
+  case MAIN_STATE_CLEANER:
+    runCleaner();
+    break;
+
+  default:
+    break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Arduino entry points
+// ---------------------------------------------------------------------------
 void setup()
 {
 
   // put your setup code here, to run once:
-  configTimer1();
-  IrReceiver.begin(45);
-  registerpins();
-  Serial.begin(9600);
+  configureTimer1Prescaler();
+  IrReceiver.begin(IR_REMOTE_RECEIVER_PIN);
+  configurePins();
+  Serial.begin(SERIAL_BAUD_RATE);
   Serial.println("TURTLE LOADING UP");
-  digitalWrite(motorLEN, LOW);
-  digitalWrite(motorREN, LOW);
-  t2 = millis();
-  t1 = millis();
-  t3 = millis();
-  t4 = millis();
+  digitalWrite(LEFT_MOTOR_ENABLE_PIN, LOW);
+  digitalWrite(RIGHT_MOTOR_ENABLE_PIN, LOW);
+  lastMotorFilterUpdateMs = millis();
+  currentTimeMs = millis();
+  groundContactTimeMs = millis();
+  phaseStartTimeMs = millis();
   Serial.println("Test");
-  t4 = millis();
+  phaseStartTimeMs = millis();
 }
 
 void loop()
 {
-  Serial.println(GROUND_FR_READ);
-  readsesnors();
+  // Prints the reading from the previous iteration (sensors are refreshed on the next line).
+  Serial.println(groundFrontRightReading);
+  readSensors();
 
-  t1 = millis();
+  currentTimeMs = millis();
 
-  switch (controlstate)
+  switch (controlState)
   {
-  case Waiting:
-    if (IrReceiver.decode())
-    {
-      // IrReceiver.printIRResultShort(&Serial);
-
-      if (IrReceiver.decodedIRData.protocol == PANASONIC)
-      {
-        if (IrReceiver.decodedIRData.command == 0x10)
-        {
-          t2 = millis();
-          stratstates = Strat1;
-          digitalWrite(LED_BUILTIN, HIGH);
-          delay(50);
-          digitalWrite(LED_BUILTIN, LOW);
-          delay(1000);
-          //  mainState=Advanced_FirstSEARCh1r;
-        }
-        else if (IrReceiver.decodedIRData.command == 0x11)
-        {
-          stratstates = Strat2;
-          digitalWrite(LED_BUILTIN, HIGH);
-          delay(50);
-          digitalWrite(LED_BUILTIN, LOW);
-          delay(50);
-          digitalWrite(LED_BUILTIN, HIGH);
-          delay(50);
-          digitalWrite(LED_BUILTIN, LOW);
-          delay(1000);
-          // mainState=Advanced_FirstSEARCh1c;
-        }
-        else if (IrReceiver.decodedIRData.command == 0x12)
-        {
-          stratstates = Strat3;
-          digitalWrite(LED_BUILTIN, HIGH);
-          delay(50);
-          digitalWrite(LED_BUILTIN, LOW);
-          delay(50);
-          digitalWrite(LED_BUILTIN, HIGH);
-          delay(50);
-          digitalWrite(LED_BUILTIN, LOW);
-          delay(50);
-          digitalWrite(LED_BUILTIN, HIGH);
-          delay(50);
-          digitalWrite(LED_BUILTIN, LOW);
-          delay(1000);
-          // mainState=Advanced_FirstSEARCh1l;
-        }
-        else if (IrReceiver.decodedIRData.command == 0x13)
-        {
-          stratstates = Strat4;
-        }
-        else if (IrReceiver.decodedIRData.command == 0x14)
-        {
-          stratstates = Strat5;
-        }
-        else if (IrReceiver.decodedIRData.command == 0x81)
-        {
-          stratstates = Cleaning;
-        }
-        else if (IrReceiver.decodedIRData.command == 0x87)
-        {
-          if (stratstates == 0)
-          {
-            digitalWrite(LED_BUILTIN, HIGH);
-            delay(1000);
-            digitalWrite(LED_BUILTIN, LOW);
-          }
-          else
-          {
-            controlstate = ACTIVE;
-            robot_state = START;
-            mainState = START;
-          }
-        }
-      }
-
-      IrReceiver.resume();
-    }
+  case CONTROL_WAITING:
+    handleWaitingState();
     break;
-  case ACTIVE:
-    if (IrReceiver.decode())
-    {
-      // IrReceiver.printIRResultShort(&Serial);
-
-      if (IrReceiver.decodedIRData.protocol == PANASONIC)
-      {
-
-        if (IrReceiver.decodedIRData.command == 0x89)
-        {
-          controlstate = STOP;
-        }
-      }
-
-      IrReceiver.resume();
-    }
-    switch (mainState)
-    {
-    case START:
-      if (stratstates == Cleaning)
-      {
-
-        mainState = Cleaner;
-        break;
-      }
-      starter();
-      t1 = millis();
-      tfirstsearch1 = millis();
-      if (stratstates == Strat1)
-      {
-        mainState = Advanced_FirstSEARCh1l;
-      }
-      else if (stratstates == Strat2)
-      {
-        mainState = Advanced_FirstSEARCh1c;
-      }
-      else if (stratstates == Strat3)
-      {
-        mainState = Advanced_FirstSEARCh1r;
-      }
-
-      break;
-
-    case Advanced_FirstSEARCh1l:
-      // actions
-      rotate_left(252, false);
-      // transitions
-      if (t1 - tfirstsearch1 >= 100)
-      {
-        mainState = Advanced_FirstSEARCh2l;
-        tfirstsearch2 = millis();
-      }
-      else if (IR_FR_READ == 0 || IR_FL_READ == 0)
-      {
-        mainState = Advanced_TornadoSEARCHr;
-        ttornadosearch = millis();
-      }
-      else if (IR_R_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyright;
-        trotation = millis();
-      }
-      else if (IR_L_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyleft;
-        trotation = millis();
-      }
-      MotionServerRun(20, 0.06);
-      break;
-    case Advanced_FirstSEARCh1r:
-      // actions
-      rotate_right(252, false);
-      // transitions
-      if (t1 - tfirstsearch1 >= 100)
-      {
-        mainState = Advanced_FirstSEARCh2r;
-        tfirstsearch2 = millis();
-      }
-      else if (IR_FR_READ == 0 || IR_FL_READ == 0)
-      {
-        mainState = Advanced_TornadoSEARCHl;
-        ttornadosearch = millis();
-      }
-     else if (IR_R_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyright;
-        trotation = millis();
-      }
-      else if (IR_L_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyleft;
-        trotation = millis();
-      }
-      MotionServerRun(20, 0.06);
-      break;
-    case Advanced_FirstSEARCh1c:
-      // actions
-      forward(252, false);
-      // transitions
-      if(GROUND_FR_READ)
-      {
-        mainState = Advanced_GROUNDEDr;
-        tgrounded = millis();
-        break;
-      
-      }
-      else if(GROUND_FL_READ){
-        mainState = Advanced_GROUNDEDl;
-        tgrounded = millis();
-        break;
-      }
-      if (t1 - tfirstsearch1 >= 500)
-      {
-        
-        mainState = Advanced_TornadoSEARCHr;
-        ttornadosearch = millis();
-      }
-      else if (IR_FR_READ == 0 || IR_FL_READ == 0)
-      {
-        mainState = Advanced_TornadoSEARCHl;
-        ttornadosearch = millis();
-      }
-      else if (IR_R_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyright;
-        trotation = millis();
-      }
-      else if (IR_L_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyleft;
-        trotation = millis();
-      }
-      MotionServerRun(20, 0.06);
-      break;
-
-
-
-
-
-
-
-    case Advanced_FirstSEARCh2l:
-      // actions
-      turn_R(252, 80, false);
-      // transitions
-      if(GROUND_FR_READ)
-      {
-        mainState = Advanced_GROUNDEDr;
-        tgrounded = millis();
-        break;
-      
-      }
-      else if(GROUND_FL_READ){
-        mainState = Advanced_GROUNDEDl;
-        tgrounded = millis();
-        break;
-      }
-      if (t1 - tfirstsearch2 >= 700)
-      {
-        mainState = Advanced_TornadoSEARCHr;
-        ttornadosearch = millis();
-       
-      }
-      else if (IR_FR_READ == 0 || IR_FL_READ == 0)
-      {
-        mainState = Advanced_TornadoSEARCHr;
-        ttornadosearch = millis();
-      }
-      else if (IR_R_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyright;
-        trotation = millis();
-      }
-      else if (IR_L_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyleft;
-        trotation = millis();
-      }
-      MotionServerRun(20, 0.06);
-      break;
-    case Advanced_FirstSEARCh2r:
-      // actions
-      turn_L(252, 80, false);
-      // transitions
-      if(GROUND_FR_READ)
-      {
-        mainState = Advanced_GROUNDEDr;
-        tgrounded = millis();
-        break;
-      
-      }
-      else if(GROUND_FL_READ){
-        mainState = Advanced_GROUNDEDl;
-        tgrounded = millis();
-        break;
-      }
-      if (t1 - tfirstsearch2 >= 700)
-      {
-        mainState = Advanced_TornadoSEARCHl;
-        ttornadosearch = millis();
-        
-      }
-      else if (IR_FR_READ == 0 || IR_FL_READ == 0)
-      {
-        mainState = Advanced_TornadoSEARCHl;
-        ttornadosearch = millis();
-      }
-      else if (IR_R_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyright;
-        trotation = millis();
-      }
-      else if (IR_L_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyleft;
-        trotation = millis();
-      }
-      MotionServerRun(20, 0.06);
-      break;
-
-
-
-
-
-
-
-
-
-    case Advanced_TornadoSEARCHr:
-
-      // actions
-      rotate_right(180, true);
-      // transitions
-      if(GROUND_FR_READ)
-      {
-        mainState = Advanced_GROUNDEDr;
-        tgrounded = millis();
-        break;
-      
-      }
-      else if(GROUND_FL_READ){
-        mainState = Advanced_GROUNDEDl;
-        tgrounded = millis();
-        break;
-      }
-      if (IR_FR_READ == 0 && IR_FL_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKFORWARD;
-        trandomsearch2 = millis();
-      }
-      else if (IR_FR_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKRIGHT;
-      }
-      else if (IR_FL_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKLEFT;
-      }
-      else if (IR_R_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyright;
-      }
-      else if (IR_L_READ == 0)
-      {
-        mainState = Advanced_RotateSlowlyleft;
-      }
-      // if (t1 - ttornadosearch >= 2000)
-      // {
-      //   mainState = Advanced_RandomSEARCHstep1;
-      //   trandomsearch2 = millis();
-      //   controlstate = STOP;
-      // }
-      MotionServerRun(20, 0.06);
-      break;
-    case Advanced_TornadoSEARCHl:
-      // actions
-      rotate_left(180, true);
-      // transitions
-      if(GROUND_FR_READ)
-      {
-        mainState = Advanced_GROUNDEDr;
-        tgrounded = millis();
-        break;
-      
-      }
-      else if(GROUND_FL_READ){
-        mainState = Advanced_GROUNDEDl;
-        tgrounded = millis();
-        break;
-      }
-      if (IR_FR_READ == 0 && IR_FL_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKFORWARD;
-        trandomsearch2 = millis();
-      }
-      else if (IR_FR_READ == 0)
-      {  
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKRIGHT;
-      }
-      else if (IR_FL_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKLEFT;
-      }
-      else if (IR_R_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_RotateSlowlyright;
-      }
-      else if (IR_L_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_RotateSlowlyleft;
-      }
-      // else if (t1 - ttornadosearch >= 2000)
-      // {
-      //   mainState = Advanced_RandomSEARCHstep1;
-      //   trandomsearch1 = millis();
-      //   controlstate = STOP;
-      // }
-
-      MotionServerRun(20, 0.06);
-      break;
-
-
-
-
-
-
-
-
-
-    case Advanced_RandomSEARCHstep1:
-      // actions
-
-      // transitions
-      MotionServerRun(20, 0.06);
-      break;
-    case Advanced_RandomSEARCHstep2:
-      // actions
-
-      // transitions
-      MotionServerRun(20, 0.06);
-      break;
-
-
-
-
-
-
-
-
-    case Advanced_APPROACH_step1:
-      // actions
-
-      // transitions
-      MotionServerRun(20, 0.06);
-      break;
-    case Advanced_APPROACH_step2:
-      // actions
-
-      // transitions
-      MotionServerRun(20, 0.06);
-      break;
-
-
-
-
-
-
-
-
-
-
-    case Advanced_DIRECTATTACKFORWARD:
-      // actions
-      forward(252, false);
-      // transitions
-      if (IR_FR_READ == 0 && IR_FL_READ == 0)
-      {
-        mainState = Advanced_DIRECTATTACKFORWARD;
-       
-      }
-      else if (IR_FR_READ == 0)
-      {
-        mainState = Advanced_DIRECTATTACKRIGHT;
-      }
-      else if (IR_FL_READ == 0)
-      {
-        mainState = Advanced_DIRECTATTACKLEFT;
-      }
-      else if (IR_FR_READ && IR_FL_READ)
-      {
-        mainState = Advanced_TornadoSEARCHr;
-      }
-      MotionServerRun(20, 0.05);
-      break;
-    case Advanced_DIRECTATTACKLEFT:
-      // actions
-      turn_L(252, 60, false);
-      // transitions
-      if (IR_FR_READ == 0 && IR_FL_READ == 0)
-      {
-        mainState = Advanced_DIRECTATTACKFORWARD;
-        
-      }
-      else if (IR_FR_READ == 0)
-      {
-        mainState = Advanced_DIRECTATTACKRIGHT;
-      }
-      else if (IR_FL_READ == 0)
-      {
-        mainState = Advanced_DIRECTATTACKLEFT;
-      }
-      else if (IR_FR_READ && IR_FL_READ)
-      {
-        mainState = Advanced_TornadoSEARCHl;
-        ttornadosearch = millis();
-      }
-      MotionServerRun(20, 0.05);
-      break;
-    case Advanced_DIRECTATTACKRIGHT:
-      // actions
-      turn_R(252, 60, false);
-      // transitions
-      if (IR_FR_READ == 0 && IR_FL_READ == 0)
-      {
-        mainState = Advanced_DIRECTATTACKFORWARD;
-        
-      }
-      else if (IR_FR_READ == 0)
-      {
-        mainState = Advanced_DIRECTATTACKRIGHT;
-      }
-      else if (IR_FL_READ == 0)
-      {
-        mainState = Advanced_DIRECTATTACKLEFT;
-      }
-      else if (IR_FR_READ && IR_FL_READ)
-      {
-        mainState = Advanced_TornadoSEARCHr;
-        ttornadosearch = millis();
-      }
-      MotionServerRun(20, 0.05);
-      break;
-
-
-
-
-
-
-
-
-
-
-
-    case Advanced_RotateSlowlyright:
-      // actions
-      rotate_right(170, true);
-      // transitions
-      if(GROUND_FR_READ)
-      {
-        mainState = Advanced_GROUNDEDr;
-        tgrounded = millis();
-        break;
-      
-      }
-      else if(GROUND_FL_READ){
-        mainState = Advanced_GROUNDEDl;
-        tgrounded = millis();
-        break;
-      }
-      if (IR_FR_READ == 0 && IR_FL_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKFORWARD;
-        trandomsearch2 = millis();
-      }
-      else if (IR_FR_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKRIGHT;
-      }
-      else if (IR_FL_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKLEFT;
-      }
-      if (IR_L_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_RotateSlowlyleft;
-        trotation = millis();
-      }
-    
-      MotionServerRun(20, 0.06);
-      break;
-    case Advanced_RotateSlowlyleft:
-      // actions
-      rotate_left(170, true);
-      // transitions
-      if(GROUND_FR_READ)
-      {
-        mainState = Advanced_GROUNDEDr;
-        tgrounded = millis();
-        break;
-      
-      }
-      else if(GROUND_FL_READ){
-        mainState = Advanced_GROUNDEDl;
-        tgrounded = millis();
-        break;
-      }
-      if (IR_FR_READ == 0 && IR_FL_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKFORWARD;
-        trandomsearch2 = millis();
-      }
-      else if (IR_FR_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKRIGHT;
-      }
-      else if (IR_FL_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_DIRECTATTACKLEFT;
-      }
-      if (IR_R_READ == 0)
-      {
-        moveInstant(128, 128);
-        MotionServerRun();
-        mainState = Advanced_RotateSlowlyright;
-        trotation = millis();
-      }
-     
-      MotionServerRun(20, 0.06);
-      break;
-
-
-
-
-
-
-
-    case Advanced_GROUNDEDr:
-      // actions
-      moveInstant(30, 70);
-      // transitions
-      if (t1 - tgrounded >= 600)
-      {
-        mainState = Advanced_TornadoSEARCHr;
-        ttornadosearch = millis();
-      }
-
-      MotionServerRun(20, 0.06);
-      break;
-    case Advanced_GROUNDEDl:
-      // actions
-      moveInstant(70, 30);
-      // transitions
-      if (t1 - tgrounded >= 600)
-      {
-        mainState = Advanced_TornadoSEARCHl;
-        ttornadosearch = millis();
-      }
-
-      MotionServerRun(20, 0.06);
-      break;
-
-
-
-
-
-
-    case Cleaner:
-      // actions
-      backward(70, false);
-      // transitions
-
-      MotionServerRun(20, 0.06);
-      break;
-    }
-
+  case CONTROL_ACTIVE:
+    handleActiveState();
     break;
-
-  
-  case STOP:
-    stratstates = 0;
-    moveInstant(128, 128);
-    MotionServerRun();
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(2000);
-    digitalWrite(LED_BUILTIN, LOW);
-    resetallvalues();
-    controlstate = Waiting;
+  case CONTROL_STOP:
+    handleStopState();
     break;
   }
 }

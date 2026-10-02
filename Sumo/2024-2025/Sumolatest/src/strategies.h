@@ -1,193 +1,225 @@
 // SEARCH STRATEGIES
-#include <functions.h>
+//   Each function runs one step of a strategy based on robotState and the latest sensor readings.
+#pragma once
+#include "functions.h"
 
-void simple()
+// ---------------------------------------------------------------------------
+// Simple strategy constants
+// ---------------------------------------------------------------------------
+const int SIMPLE_SEARCH_FORWARD_PWM = 155;
+const int SIMPLE_ATTACK_PWM = 160;
+const int SIMPLE_ATTACK_TURN_DIFFERENCE = 30;
+
+const int SIMPLE_GROUND_REVERSE_PWM = 90;
+const unsigned long SIMPLE_GROUND_REVERSE_DURATION_MS = 500;
+const int SIMPLE_GROUND_ROTATE_PWM = 160;
+const unsigned long SIMPLE_GROUND_ROTATE_DURATION_MS = 250;
+
+// ---------------------------------------------------------------------------
+// Smart strategy constants
+// ---------------------------------------------------------------------------
+const int SMART_SEARCH_ROTATE_PWM = 150;
+const int SMART_ATTACK_PWM = 240;
+const int SMART_ATTACK_TURN_DIFFERENCE = 50;
+const int SMART_ROTATE_PWM = 200;
+
+// Drives forward while searching, backs off and turns away from the edge when a
+// ground sensor triggers, and attacks as soon as any IR sensor sees the opponent.
+void runSimpleStrategy()
 {
-  switch (robot_state)
+  switch (robotState)
   {
     // actions
     // transitions
 
-  case START:
-    starter();
+  case ROBOT_STATE_START:
+    startCountdown();
     break;
-  case SEARCH:
-    
+  case ROBOT_STATE_SEARCH:
 
-    if (IR_FR_READ == 0 || IR_FL_READ == 0 || IR_R_READ == 0 || IR_L_READ == 0)
+    if (irFrontRightReading == OPPONENT_DETECTED || irFrontLeftReading == OPPONENT_DETECTED ||
+        irRightReading == OPPONENT_DETECTED || irLeftReading == OPPONENT_DETECTED)
     {
-      robot_state = ATTACK;
+      robotState = ROBOT_STATE_ATTACK;
     }
 
-    if (GROUND_FR_READ)
+    if (groundFrontRightReading == GROUND_DETECTED)
     {
-      groundedr = 1;
-      t3 = millis();
+      groundedRight = 1;
+      groundContactTimeMs = millis();
     }
-    if (GROUND_FL_READ)
+    if (groundFrontLeftReading == GROUND_DETECTED)
     {
-      groundedl = 1;
-      t3 = millis();
+      groundedLeft = 1;
+      groundContactTimeMs = millis();
     }
-    if (groundedl)
+    if (groundedLeft)
     {
-      if (t1 - t3 <= 500)
+      if (currentTimeMs - groundContactTimeMs <= SIMPLE_GROUND_REVERSE_DURATION_MS)
       {
-        moveInstant(90, 90);
-        t4 = millis();
+        setMotorsInstantly(SIMPLE_GROUND_REVERSE_PWM, SIMPLE_GROUND_REVERSE_PWM);
+        phaseStartTimeMs = millis();
       }
-      else if (t1 - t4 <= 250)
+      else if (currentTimeMs - phaseStartTimeMs <= SIMPLE_GROUND_ROTATE_DURATION_MS)
       {
-        rotate_right(160, false);
+        rotateRight(SIMPLE_GROUND_ROTATE_PWM, false);
       }
       else
       {
-        groundedl = 0;
+        groundedLeft = 0;
       }
     }
-    else if (groundedr)
+    else if (groundedRight)
     {
-      if (t1 - t3 <= 500)
+      if (currentTimeMs - groundContactTimeMs <= SIMPLE_GROUND_REVERSE_DURATION_MS)
       {
-        moveInstant(90, 90);
-        t4 = millis();
+        setMotorsInstantly(SIMPLE_GROUND_REVERSE_PWM, SIMPLE_GROUND_REVERSE_PWM);
+        phaseStartTimeMs = millis();
       }
-      else if (t1 - t4 <= 250)
+      else if (currentTimeMs - phaseStartTimeMs <= SIMPLE_GROUND_ROTATE_DURATION_MS)
       {
-        rotate_left(160, false);
+        rotateLeft(SIMPLE_GROUND_ROTATE_PWM, false);
       }
       else
       {
-        groundedr = 0;
+        groundedRight = 0;
       }
     }
     else
     {
-      forward(155, false);
-      t3 = millis();
-      t4 = millis();
+      driveForward(SIMPLE_SEARCH_FORWARD_PWM, false);
+      groundContactTimeMs = millis();
+      phaseStartTimeMs = millis();
     }
     break;
 
-  case ATTACK:
-    
-    if (IR_FR_READ == 0 && IR_FL_READ == 0)
+  case ROBOT_STATE_ATTACK:
+
+    if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == OPPONENT_DETECTED)
     {
-      forward(160, false);
+      driveForward(SIMPLE_ATTACK_PWM, false);
     }
-    else if (IR_FR_READ == 1 && IR_FL_READ == 0)
+    else if (irFrontRightReading == NO_OPPONENT && irFrontLeftReading == OPPONENT_DETECTED)
     {
-      turn_L(160, 30, true);
+      turnLeft(SIMPLE_ATTACK_PWM, SIMPLE_ATTACK_TURN_DIFFERENCE, true);
     }
-    else if (IR_FR_READ == 0 && IR_FL_READ == 1)
+    else if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == NO_OPPONENT)
     {
-      turn_R(160, 30, true);
+      turnRight(SIMPLE_ATTACK_PWM, SIMPLE_ATTACK_TURN_DIFFERENCE, true);
     }
-    else if (IR_R_READ == 0)
+    else if (irRightReading == OPPONENT_DETECTED)
     {
-      rotate_right(160, false);
+      rotateRight(SIMPLE_ATTACK_PWM, false);
     }
-    else if (IR_L_READ == 0)
+    else if (irLeftReading == OPPONENT_DETECTED)
     {
-      rotate_left(160, false);
+      rotateLeft(SIMPLE_ATTACK_PWM, false);
     }
-    else if (IR_FR_READ == 1 && IR_FL_READ == 1 && IR_R_READ == 1 && IR_L_READ == 1)
+    else if (irFrontRightReading == NO_OPPONENT && irFrontLeftReading == NO_OPPONENT &&
+             irRightReading == NO_OPPONENT && irLeftReading == NO_OPPONENT)
     {
 
-      robot_state = SEARCH;
+      robotState = ROBOT_STATE_SEARCH;
     }
 
     break;
-  case STOP:
+  case ROBOT_STATE_STOP:
     brake();
+    break;
+  default:
     break;
   }
 }
-void smart()
+
+// Spins in place while searching, attacks at high speed, and remembers which side
+// the opponent slipped away on so it can rotate that way to find them again.
+void runSmartStrategy()
 {
-  switch (robot_state)
+  switch (robotState)
   {
-  case START:
+  case ROBOT_STATE_START:
 
     launcher();
     break;
-  case SEARCH:
-    rotate_right(150, true);
+  case ROBOT_STATE_SEARCH:
+    rotateRight(SMART_SEARCH_ROTATE_PWM, true);
 
-    if (IR_FR_READ == 0 || IR_FL_READ == 0)
+    if (irFrontRightReading == OPPONENT_DETECTED || irFrontLeftReading == OPPONENT_DETECTED)
     {
-      robot_state = ATTACK;
+      robotState = ROBOT_STATE_ATTACK;
     }
-    else if (IR_R_READ == 0)
+    else if (irRightReading == OPPONENT_DETECTED)
     {
-      robot_state = ROTATE_RIGHT;
+      robotState = ROBOT_STATE_ROTATE_RIGHT;
     }
-    else if (IR_L_READ == 0)
+    else if (irLeftReading == OPPONENT_DETECTED)
     {
-      robot_state = ROTATE_LEFT;
+      robotState = ROBOT_STATE_ROTATE_LEFT;
     }
 
     break;
-  case ATTACK:
+  case ROBOT_STATE_ATTACK:
 
-    if (IR_FR_READ == 0 && IR_FL_READ == 0)
+    if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == OPPONENT_DETECTED)
     {
-      forward(240, false);
+      driveForward(SMART_ATTACK_PWM, false);
     }
-    else if (IR_FR_READ == 1 && IR_FL_READ == 0)
+    else if (irFrontRightReading == NO_OPPONENT && irFrontLeftReading == OPPONENT_DETECTED)
     {
-      turn_L(240, 50, true);
-      remember_left = 1;
+      turnLeft(SMART_ATTACK_PWM, SMART_ATTACK_TURN_DIFFERENCE, true);
+      rememberedLeft = 1;
     }
-    else if (IR_FR_READ == 0 && IR_FL_READ == 1)
+    else if (irFrontRightReading == OPPONENT_DETECTED && irFrontLeftReading == NO_OPPONENT)
     {
-      turn_R(240, 50, true);
-      remember_right = 1;
+      turnRight(SMART_ATTACK_PWM, SMART_ATTACK_TURN_DIFFERENCE, true);
+      rememberedRight = 1;
     }
-    else if (IR_FR_READ == 1 && IR_FL_READ == 1)
+    else if (irFrontRightReading == NO_OPPONENT && irFrontLeftReading == NO_OPPONENT)
     {
-      if (remember_left == 1)
+      if (rememberedLeft == 1)
       {
-        robot_state = ROTATE_LEFT;
-        remember_left = 0;
-        remember_right = 0;
+        robotState = ROBOT_STATE_ROTATE_LEFT;
+        rememberedLeft = 0;
+        rememberedRight = 0;
       }
-      else if (remember_right == 1)
+      else if (rememberedRight == 1)
       {
-        robot_state = ROTATE_RIGHT;
+        robotState = ROBOT_STATE_ROTATE_RIGHT;
 
-        remember_right = 0;
-        remember_left = 0;
+        rememberedRight = 0;
+        rememberedLeft = 0;
       }
       else
       {
-        robot_state = ROTATE_LEFT;
+        robotState = ROBOT_STATE_ROTATE_LEFT;
       }
     }
 
     break;
 
-  case GROUND:
+  case ROBOT_STATE_GROUND:
 
-    robot_state = SEARCH;
+    robotState = ROBOT_STATE_SEARCH;
     break;
-  case ROTATE_RIGHT:
-    rotate_right(200, false);
-    if (IR_FR_READ == 0 || IR_FL_READ == 0)
+  case ROBOT_STATE_ROTATE_RIGHT:
+    rotateRight(SMART_ROTATE_PWM, false);
+    if (irFrontRightReading == OPPONENT_DETECTED || irFrontLeftReading == OPPONENT_DETECTED)
     {
-      robot_state = ATTACK;
+      robotState = ROBOT_STATE_ATTACK;
     }
     break;
-  case ROTATE_LEFT:
-    rotate_left(200, false);
+  case ROBOT_STATE_ROTATE_LEFT:
+    rotateLeft(SMART_ROTATE_PWM, false);
 
-    if (IR_FR_READ == 0 || IR_FL_READ == 0)
+    if (irFrontRightReading == OPPONENT_DETECTED || irFrontLeftReading == OPPONENT_DETECTED)
     {
-      robot_state = ATTACK;
+      robotState = ROBOT_STATE_ATTACK;
     }
     break;
-  case STOP:
+  case ROBOT_STATE_STOP:
     brake();
+    break;
+  default:
     break;
   }
 }

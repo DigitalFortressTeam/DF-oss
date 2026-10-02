@@ -1,197 +1,270 @@
-#include <pins.h>
-void GROUND_READ();
-void registerpins()
+// Hardware setup, sensor reading, motor control and status LED helpers.
+#pragma once
+#include "pins.h"
+#include "state.h"
+
+// ---------------------------------------------------------------------------
+// Motor PWM constants
+//   128 is neutral (motor stopped), above it drives forward, below it reverses.
+// ---------------------------------------------------------------------------
+const int MOTOR_NEUTRAL_PWM = 128;
+const int FORWARD_MAX_PWM = 252;
+const int REVERSE_MIN_PWM = 2;
+const int REVERSE_FALLBACK_PWM = 100;  // Used when driveBackward() is asked for 128 or more
+const int PWM_MIRROR_CENTER = 127;     // Rotations mirror the outer wheel's PWM around this value
+
+// updateMotors() limits applied to the smoothed PWM
+const int MOTOR_MIN_PWM = 3;
+const int MOTOR_MAX_PWM = 251;
+
+const unsigned long DEFAULT_FILTER_PERIOD_MS = 10;
+const float DEFAULT_FILTER_RATIO = 0.1;
+
+// Status LED timings
+const unsigned long STATUS_LED_BLINK_MS = 50;
+const unsigned long STATUS_LED_PAUSE_MS = 1000;
+
+// ---------------------------------------------------------------------------
+// Pins and sensors
+// ---------------------------------------------------------------------------
+void configurePins()
 {
 
-  pinMode(motorLEN, OUTPUT);
-  pinMode(motorREN, OUTPUT);
-  pinMode(buzzer, OUTPUT);
-  pinMode(GROUND_BL, INPUT);
-  pinMode(GROUND_BR, INPUT);
-  pinMode(GROUND_FL, INPUT);
-  pinMode(GROUND_FR, INPUT);
-  pinMode(IR_L, INPUT_PULLUP);
-  pinMode(IR_R, INPUT_PULLUP);
-  pinMode(IR_FL, INPUT_PULLUP);
-  pinMode(IR_FR, INPUT_PULLUP);
-  pinMode(motorL_PWM, OUTPUT);
-  pinMode(motorR_PWM, OUTPUT);
+  pinMode(LEFT_MOTOR_ENABLE_PIN, OUTPUT);
+  pinMode(RIGHT_MOTOR_ENABLE_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(GROUND_SENSOR_BACK_LEFT_PIN, INPUT);
+  pinMode(GROUND_SENSOR_BACK_RIGHT_PIN, INPUT);
+  pinMode(GROUND_SENSOR_FRONT_LEFT_PIN, INPUT);
+  pinMode(GROUND_SENSOR_FRONT_RIGHT_PIN, INPUT);
+  pinMode(IR_SENSOR_LEFT_PIN, INPUT_PULLUP);
+  pinMode(IR_SENSOR_RIGHT_PIN, INPUT_PULLUP);
+  pinMode(IR_SENSOR_FRONT_LEFT_PIN, INPUT_PULLUP);
+  pinMode(IR_SENSOR_FRONT_RIGHT_PIN, INPUT_PULLUP);
+  pinMode(LEFT_MOTOR_PWM_PIN, OUTPUT);
+  pinMode(RIGHT_MOTOR_PWM_PIN, OUTPUT);
 }
-void readsesnors()
+
+void readSensors()
 {
-  GROUND_BL_READ = digitalRead(GROUND_BL);
-  GROUND_BR_READ = digitalRead(GROUND_BR);
-  GROUND_FL_READ = digitalRead(GROUND_FL);
-  GROUND_FR_READ = digitalRead(GROUND_FR);
-  IR_L_READ = digitalRead(IR_L);
-  IR_R_READ = digitalRead(IR_R);
-  IR_FL_READ = digitalRead(IR_FL);
-  IR_FR_READ = digitalRead(IR_FR);
+  groundBackLeftReading = digitalRead(GROUND_SENSOR_BACK_LEFT_PIN);
+  groundBackRightReading = digitalRead(GROUND_SENSOR_BACK_RIGHT_PIN);
+  groundFrontLeftReading = digitalRead(GROUND_SENSOR_FRONT_LEFT_PIN);
+  groundFrontRightReading = digitalRead(GROUND_SENSOR_FRONT_RIGHT_PIN);
+  irLeftReading = digitalRead(IR_SENSOR_LEFT_PIN);
+  irRightReading = digitalRead(IR_SENSOR_RIGHT_PIN);
+  irFrontLeftReading = digitalRead(IR_SENSOR_FRONT_LEFT_PIN);
+  irFrontRightReading = digitalRead(IR_SENSOR_FRONT_RIGHT_PIN);
 }
 
-float pwm_prev = 128;
+// ---------------------------------------------------------------------------
+// Motor control
+//   Callers set a target PWM per side; updateMotors() eases the real PWM
+//   toward that target with an exponential filter and writes it to the motors.
+// ---------------------------------------------------------------------------
+float rightMotorTargetPwm = MOTOR_NEUTRAL_PWM;
+float leftMotorTargetPwm = MOTOR_NEUTRAL_PWM;
+float rightMotorPwm = MOTOR_NEUTRAL_PWM;
+float leftMotorPwm = MOTOR_NEUTRAL_PWM;
 
-
-float rightMotorsTargetPWM = 128;
-float leftMotorsTargetPWM = 128;
-float rightMotorsPWM = 128;
-float leftMotorsPWM = 128;
-
-void MotionServerRun(unsigned long expFilterPeriod = 10, float expFilterRatio = 0.1)
+void updateMotors(unsigned long filterPeriodMs = DEFAULT_FILTER_PERIOD_MS, float filterRatio = DEFAULT_FILTER_RATIO)
 {
 
-  t1 = millis();
-  if (t1 - t2 >= expFilterPeriod)
+  currentTimeMs = millis();
+  if (currentTimeMs - lastMotorFilterUpdateMs >= filterPeriodMs)
   {
-    t2 = millis();
-    rightMotorsPWM = (rightMotorsTargetPWM * expFilterRatio) + (rightMotorsPWM * (1.0 - expFilterRatio));
-    leftMotorsPWM = (leftMotorsTargetPWM * expFilterRatio) + (leftMotorsPWM * (1.0 - expFilterRatio));
+    lastMotorFilterUpdateMs = millis();
+    rightMotorPwm = (rightMotorTargetPwm * filterRatio) + (rightMotorPwm * (1.0 - filterRatio));
+    leftMotorPwm = (leftMotorTargetPwm * filterRatio) + (leftMotorPwm * (1.0 - filterRatio));
 
-    rightMotorsPWM = constrain(rightMotorsPWM, 3, 251);
-    leftMotorsPWM = constrain(leftMotorsPWM, 3, 251);
+    rightMotorPwm = constrain(rightMotorPwm, MOTOR_MIN_PWM, MOTOR_MAX_PWM);
+    leftMotorPwm = constrain(leftMotorPwm, MOTOR_MIN_PWM, MOTOR_MAX_PWM);
   }
-  analogWrite(motorL_PWM, leftMotorsPWM);
-  analogWrite(motorR_PWM, rightMotorsPWM);
-  digitalWrite(motorLEN, HIGH);
-  digitalWrite(motorREN, HIGH);
+  analogWrite(LEFT_MOTOR_PWM_PIN, leftMotorPwm);
+  analogWrite(RIGHT_MOTOR_PWM_PIN, rightMotorPwm);
+  digitalWrite(LEFT_MOTOR_ENABLE_PIN, HIGH);
+  digitalWrite(RIGHT_MOTOR_ENABLE_PIN, HIGH);
 }
 
-void move(byte rpwm, byte lpwm)
+// Sets the target PWM; the real PWM follows gradually.
+void setMotorTargets(byte rightPwm, byte leftPwm)
 {
-  rightMotorsTargetPWM = rpwm;
-  leftMotorsTargetPWM = lpwm;
+  rightMotorTargetPwm = rightPwm;
+  leftMotorTargetPwm = leftPwm;
 }
 
-void moveInstant(byte rpwm, byte lpwm)
+// Sets the target PWM and the real PWM together, skipping the gradual ramp.
+void setMotorsInstantly(byte rightPwm, byte leftPwm)
 {
-  rightMotorsTargetPWM = rpwm;
-  leftMotorsTargetPWM = lpwm;
-  rightMotorsPWM = rpwm;
-  leftMotorsPWM = lpwm;
+  rightMotorTargetPwm = rightPwm;
+  leftMotorTargetPwm = leftPwm;
+  rightMotorPwm = rightPwm;
+  leftMotorPwm = leftPwm;
 }
 
-void forward(int Pwm, bool instant)
+void driveForward(int pwm, bool instant)
 {
-  if (Pwm > 252)
+  if (pwm > FORWARD_MAX_PWM)
   {
-    Pwm = 252;
+    pwm = FORWARD_MAX_PWM;
   }
-  else if (Pwm <= 128)
+  else if (pwm <= MOTOR_NEUTRAL_PWM)
   {
-    Pwm = 128;
+    pwm = MOTOR_NEUTRAL_PWM;
   }
   if (instant)
   {
-    moveInstant(Pwm, Pwm);
+    setMotorsInstantly(pwm, pwm);
   }
   else
   {
-    move(Pwm, Pwm);
+    setMotorTargets(pwm, pwm);
   }
 }
 
-void backward(byte Pwm, bool instant)
+void driveBackward(byte pwm, bool instant)
 {
 
-  if (Pwm < 2)
+  if (pwm < REVERSE_MIN_PWM)
   {
-    Pwm = 2;
+    pwm = REVERSE_MIN_PWM;
   }
-  else if (Pwm >= 128)
+  else if (pwm >= MOTOR_NEUTRAL_PWM)
   {
-    Pwm = 100;
+    pwm = REVERSE_FALLBACK_PWM;
   }
   if (instant)
   {
-    moveInstant(Pwm, Pwm);
+    setMotorsInstantly(pwm, pwm);
   }
   else
   {
-    move(Pwm, Pwm);
+    setMotorTargets(pwm, pwm);
   }
 }
-void rotate_left(byte Pwm, bool instant)
+
+// Spins on the spot: right wheel at `pwm`, left wheel mirrored.
+void rotateLeft(byte pwm, bool instant)
 {
 
-  int PwmL = 127 - (Pwm - 127);
+  int leftPwm = PWM_MIRROR_CENTER - (pwm - PWM_MIRROR_CENTER);
   if (instant)
   {
-    moveInstant(Pwm, PwmL);
+    setMotorsInstantly(pwm, leftPwm);
   }
   else
   {
-    move(Pwm, PwmL);
+    setMotorTargets(pwm, leftPwm);
   }
 }
-void rotate_right(byte Pwm, bool instant)
-{
-  int PwmR = 127 - (Pwm - 127);
-  if (instant)
-  {
-    moveInstant(PwmR, Pwm);
-  }
-  else
-  {
-    move(PwmR, Pwm);
-  }
-}
-void turn_L(int Pwm, int difference, bool instant)
-{
-  int PwmL = Pwm - difference;
 
+// Spins on the spot: left wheel at `pwm`, right wheel mirrored.
+void rotateRight(byte pwm, bool instant)
+{
+  int rightPwm = PWM_MIRROR_CENTER - (pwm - PWM_MIRROR_CENTER);
   if (instant)
   {
-    moveInstant(Pwm, PwmL);
+    setMotorsInstantly(rightPwm, pwm);
   }
   else
   {
-    move(Pwm, PwmL);
+    setMotorTargets(rightPwm, pwm);
   }
 }
-void turn_R(int Pwm, int difference, bool instant)
+
+// Curves left: right wheel at `pwm`, left wheel `difference` slower.
+void turnLeft(int pwm, int difference, bool instant)
 {
-  int PwmR = Pwm - difference;
+  int leftPwm = pwm - difference;
 
   if (instant)
   {
-    moveInstant(PwmR, Pwm);
+    setMotorsInstantly(pwm, leftPwm);
   }
   else
   {
-    move(PwmR, Pwm);
+    setMotorTargets(pwm, leftPwm);
   }
 }
+
+// Curves right: left wheel at `pwm`, right wheel `difference` slower.
+void turnRight(int pwm, int difference, bool instant)
+{
+  int rightPwm = pwm - difference;
+
+  if (instant)
+  {
+    setMotorsInstantly(rightPwm, pwm);
+  }
+  else
+  {
+    setMotorTargets(rightPwm, pwm);
+  }
+}
+
 void brake()
 {
 
-  moveInstant(128, 128);
+  setMotorsInstantly(MOTOR_NEUTRAL_PWM, MOTOR_NEUTRAL_PWM);
 }
 
-// INTERRUPT FUNCTION
-void GROUND_READ()
+// Brakes and writes the result to the motors straight away.
+void stopMotorsNow()
 {
-  robot_state = GROUND;
+  setMotorsInstantly(MOTOR_NEUTRAL_PWM, MOTOR_NEUTRAL_PWM);
+  updateMotors();
 }
 
-void starter()
+// ---------------------------------------------------------------------------
+// Status LED
+// ---------------------------------------------------------------------------
+
+// Blinks the built-in LED `blinkCount` times, ending with a one second pause.
+void blinkStatusLed(int blinkCount)
 {
-
-
-  //total time must be exactly 5 seconds
+  for (int blink = 0; blink < blinkCount; blink++)
+  {
     digitalWrite(LED_BUILTIN, HIGH);
-    delay(500);
+    delay(STATUS_LED_BLINK_MS);
     digitalWrite(LED_BUILTIN, LOW);
-    delay(500);
-   
+    bool isLastBlink = (blink == blinkCount - 1);
+    delay(isLastBlink ? STATUS_LED_PAUSE_MS : STATUS_LED_BLINK_MS);
+  }
+}
 
+// Keeps the built-in LED on for `durationMs`.
+void pulseStatusLed(unsigned long durationMs)
+{
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(durationMs);
+  digitalWrite(LED_BUILTIN, LOW);
+}
 
+// ---------------------------------------------------------------------------
+// Start sequence
+// ---------------------------------------------------------------------------
 
+// INTERRUPT FUNCTION (not attached to any interrupt at the moment)
+void onGroundDetectedInterrupt()
+{
+  robotState = ROBOT_STATE_GROUND;
+}
 
-  // t1 = millis();
-  // if (t1 - t3 >= 1000 && amount < 4)
+void startCountdown()
+{
+
+  // total time must be exactly 5 seconds
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(500);
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(500);
+
+  // Older version of the countdown, kept for reference:
+  // currentTimeMs = millis();
+  // if (currentTimeMs - groundContactTimeMs >= 1000 && amount < 4)
   // {
   //   digitalWrite(LED_BUILTIN, HIGH);
-  //   t3 = millis();
+  //   groundContactTimeMs = millis();
   //   delay(500);
   //   digitalWrite(LED_BUILTIN, LOW);
   //   delay(500);
@@ -201,39 +274,42 @@ void starter()
   // {
   //   digitalWrite(LED_BUILTIN, 1);
   //   amount = 0;
-    // delay(1000);
-    // digitalWrite(LED_BUILTIN, 0);
-    // delay(1000);
+  // delay(1000);
+  // digitalWrite(LED_BUILTIN, 0);
+  // delay(1000);
 
-    // main 
-    // robot_state = SEARCH;
-    // tfirstsearch1 = millis();
-    
+  // main
+  // robotState = ROBOT_STATE_SEARCH;
+  // firstSearchPhase1StartMs = millis();
+
   // }
 }
+
+// Drives forward for 300 ms after the start, then switches to searching.
 void launcher()
 {
-  t1 = millis();
-  if (t1 - t4 <= 300)
+  currentTimeMs = millis();
+  if (currentTimeMs - phaseStartTimeMs <= 300)
   {
-    forward(200, false);
+    driveForward(200, false);
   }
   else
   {
-    robot_state = SEARCH;
+    robotState = ROBOT_STATE_SEARCH;
   }
 }
-void resetallvalues()
-{
-  pwm_prev = 128;
 
-  rightMotorsTargetPWM = 128;
-  leftMotorsTargetPWM = 128;
-  rightMotorsPWM = 128;
-  leftMotorsPWM = 128;
-  
-  remember_right = 0;
-  remember_left = 0;
-  digitalWrite(motorLEN, LOW);
-  digitalWrite(motorREN, LOW);
+void resetAllValues()
+{
+  previousPwm = MOTOR_NEUTRAL_PWM;
+
+  rightMotorTargetPwm = MOTOR_NEUTRAL_PWM;
+  leftMotorTargetPwm = MOTOR_NEUTRAL_PWM;
+  rightMotorPwm = MOTOR_NEUTRAL_PWM;
+  leftMotorPwm = MOTOR_NEUTRAL_PWM;
+
+  rememberedRight = 0;
+  rememberedLeft = 0;
+  digitalWrite(LEFT_MOTOR_ENABLE_PIN, LOW);
+  digitalWrite(RIGHT_MOTOR_ENABLE_PIN, LOW);
 }

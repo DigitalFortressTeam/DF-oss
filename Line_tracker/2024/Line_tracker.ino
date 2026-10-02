@@ -1,134 +1,153 @@
-//pid speed
-const float speed = 255;
-float l_motor_speed, r_motor_speed;
-float speed_differance;
+// Line tracker: follows the line with a PID controller on the two close sensors,
+// and makes sharp turns when one of the wide sensors sees the line.
 
+// ---------------------------------------------------------------------------
+// Pins
+// ---------------------------------------------------------------------------
+// Motors
+const byte RIGHT_MOTOR_PIN = 4;
+const byte LEFT_MOTOR_PIN = 5;
 
-//motors
-const byte r_motor = 4;
-const byte l_motor = 5;
+// Close sensors (used by the PID)
+const byte RIGHT_SENSOR_PIN = A1;
+const byte LEFT_SENSOR_PIN = A2;
 
+// Wide sensors (used for full turns)
+const byte WIDE_RIGHT_SENSOR_PIN = 6;
+const byte WIDE_LEFT_SENSOR_PIN = 7;
 
-//pid sensors
-const byte r_sensor = A1;
-const byte l_sensor = A2;
+// ---------------------------------------------------------------------------
+// Speed
+// ---------------------------------------------------------------------------
+const float BASE_SPEED = 255;
+float leftMotorSpeed, rightMotorSpeed;
+float speedDifference;
 
+// ---------------------------------------------------------------------------
+// PID
+// ---------------------------------------------------------------------------
+// Constants
+const float KP = 0.7;
+const float KI = 0.001;
+const float KD = 14;
 
-//full turn sensors
-const byte wide_r_sensor = 6;
-const byte wide_l_sensor = 7;
+// Variables
+float derivative, error, lastError, integral = 0;
 
+// Variables multiplied by their constants
+float proportionalTerm, integralTerm, derivativeTerm;
 
-//pid constants
-const float kp = 0.7;
-const float ki = 0.001;
-const float kd = 14;
+// Final PID output
+float pidOutput;
 
+// Latest close sensor readings
+int rightSensorReading;
+int leftSensorReading;
 
-//pid variables
-float derivative, error, last_error, integral = 0;
+// ---------------------------------------------------------------------------
+// Full turns
+// ---------------------------------------------------------------------------
+const int FULL_TURN_ON_TRACK_THRESHOLD = 100;
+const int FULL_TURN_KICK_MOTOR_SPEED = 255;
+const int FULL_TURN_KICK_DURATION_MS = 50;
 
+const int PID_LOOP_DELAY_MS = 5;
 
-//pid variables multiplied by pid constants
-float final_derivative, final_integral, final_error;
-
-
-//pid final calculations
-float pid;
-
-//close sensors readers
-int r_sensor_reading;
-int l_sensor_reading;
-
-
-void Pidreading(int r_sensor_read, int l_sensor_read) {
-  //pid variables calculation
-  error = r_sensor_read - l_sensor_read;
+// Steers the robot by comparing both close sensors.
+void applyPidSteering(int rightSensorValue, int leftSensorValue) {
+  // PID variables calculation
+  error = rightSensorValue - leftSensorValue;
   integral = error + integral;
-  derivative = error - last_error;
+  derivative = error - lastError;
 
 
-  //multiplying pid variables with pid constants
-  final_error = error * kp;
-  final_integral = integral * ki;
-  final_derivative = derivative * kd;
+  // Multiplying PID variables with PID constants
+  proportionalTerm = error * KP;
+  integralTerm = integral * KI;
+  derivativeTerm = derivative * KD;
 
 
-  //calculating pid
-  pid = final_derivative + final_error + final_integral;
+  // Calculating PID
+  pidOutput = derivativeTerm + proportionalTerm + integralTerm;
 
 
-  //finding and using the speed of motors
-  speed_differance = byte(map(pid, 0, 1023, 0, 255));
-  r_motor_speed = speed + speed_differance;
-  l_motor_speed = speed - speed_differance;
-  analogWrite(r_motor, r_motor_speed);
-  analogWrite(l_motor, l_motor_speed);
+  // Finding and using the speed of motors
+  speedDifference = byte(map(pidOutput, 0, 1023, 0, 255));
+  rightMotorSpeed = BASE_SPEED + speedDifference;
+  leftMotorSpeed = BASE_SPEED - speedDifference;
+  analogWrite(RIGHT_MOTOR_PIN, rightMotorSpeed);
+  analogWrite(LEFT_MOTOR_PIN, leftMotorSpeed);
 
 
-  //changing the error into last error
-  last_error = error;
+  // Remembering the error for the next derivative
+  lastError = error;
 
 
-  //adding delay
-  delay(5);
+  // Adding delay
+  delay(PID_LOOP_DELAY_MS);
 }
 
-void Full_Right_Turn(int r_sensor_read, int l_sensor_read) {
-  //reading the wide right sensor
-  bool wide_r_sensor_reader = digitalRead(wide_r_sensor);
+// Sharp turn to the right, meant to run when the wide right sensor catches the line.
+void performFullRightTurn(int rightSensorValue, int leftSensorValue) {
+  // Reading the wide right sensor
+  bool wideRightSensorReading = digitalRead(WIDE_RIGHT_SENSOR_PIN);
 
 
-  //comparing if it catches light or not
-  if (wide_r_sensor_reader = 0) {
+  // Comparing if it catches light or not
+  // NOTE: this is an assignment ("=") and not a comparison ("=="), kept as in the original code.
+  // It always evaluates to false, so this turn never happens.
+  if (wideRightSensorReading = 0) {
 
-    //launches l motor for a short period of time to make a ligh turn
-    analogWrite(r_motor, 0);
-    analogWrite(l_motor, 255);
-    delay(50);
-    while (r_sensor_read > 100 or l_sensor_read > 100) {
+    // Runs the left motor alone for a short period of time to make a light turn
+    analogWrite(RIGHT_MOTOR_PIN, 0);
+    analogWrite(LEFT_MOTOR_PIN, FULL_TURN_KICK_MOTOR_SPEED);
+    delay(FULL_TURN_KICK_DURATION_MS);
+    while (rightSensorValue > FULL_TURN_ON_TRACK_THRESHOLD or leftSensorValue > FULL_TURN_ON_TRACK_THRESHOLD) {
 
-      //keeping the l motor on until the close sensors are on the track again
-      analogWrite(r_motor, 0);
-      analogWrite(l_motor, 255);
+      // Keeping the left motor on until the close sensors are on the track again
+      analogWrite(RIGHT_MOTOR_PIN, 0);
+      analogWrite(LEFT_MOTOR_PIN, FULL_TURN_KICK_MOTOR_SPEED);
     }
   }
 }
 
 
+// Sharp turn to the left, meant to run when the wide left sensor catches the line.
+void performFullLeftTurn(int rightSensorValue, int leftSensorValue) {
+  // Reading the wide left sensor
+  bool wideLeftSensorReading = digitalRead(WIDE_LEFT_SENSOR_PIN);
 
-void Full_left_Turn(int r_sensor_read, int l_sensor_read) {
-  //reading the wide left sensor
-  bool wide_l_sensor_reader = digitalRead(wide_l_sensor);
-
-  //checking if it catches light or not
-  if (wide_l_sensor_reader = 0) {
+  // Checking if it catches light or not
+  // NOTE: assignment ("=") instead of comparison ("=="), kept as in the original code,
+  // so this turn never happens either.
+  if (wideLeftSensorReading = 0) {
 
 
-    analogWrite(r_motor, 255);
-    analogWrite(l_motor, 0);
-    delay(50);
-    while (r_sensor_read > 100 or l_sensor_read > 100) {
-      analogWrite(r_motor, 255);
-      analogWrite(l_motor, 0);
+    analogWrite(RIGHT_MOTOR_PIN, FULL_TURN_KICK_MOTOR_SPEED);
+    analogWrite(LEFT_MOTOR_PIN, 0);
+    delay(FULL_TURN_KICK_DURATION_MS);
+    while (rightSensorValue > FULL_TURN_ON_TRACK_THRESHOLD or leftSensorValue > FULL_TURN_ON_TRACK_THRESHOLD) {
+      analogWrite(RIGHT_MOTOR_PIN, FULL_TURN_KICK_MOTOR_SPEED);
+      analogWrite(LEFT_MOTOR_PIN, 0);
     }
   }
 }
+
 void setup() {
-  // put your setup code here, to run once:
-  pinMode(r_motor, OUTPUT);
-  pinMode(l_motor, OUTPUT);
-  pinMode(wide_l_sensor, INPUT);
-  pinMode(wide_r_sensor, INPUT);
+  pinMode(RIGHT_MOTOR_PIN, OUTPUT);
+  pinMode(LEFT_MOTOR_PIN, OUTPUT);
+  pinMode(WIDE_LEFT_SENSOR_PIN, INPUT);
+  pinMode(WIDE_RIGHT_SENSOR_PIN, INPUT);
 }
 
 void loop() {
-  //reading the close sensors
-  r_sensor_reading = analogRead(r_sensor);
-  l_sensor_reading = analogRead(l_sensor);
+  // Reading the close sensors
+  rightSensorReading = analogRead(RIGHT_SENSOR_PIN);
+  leftSensorReading = analogRead(LEFT_SENSOR_PIN);
 
-  //applying the funcions
-  Full_left_Turn(r_sensor_reading, l_sensor_reading);
-  Full_Right_Turn(l_sensor_reading, l_sensor_reading);
-  Pidreading(r_sensor_reading, l_sensor_reading);
+  // Applying the functions
+  performFullLeftTurn(rightSensorReading, leftSensorReading);
+  // NOTE: the left reading is passed for both arguments, kept as in the original code.
+  performFullRightTurn(leftSensorReading, leftSensorReading);
+  applyPidSteering(rightSensorReading, leftSensorReading);
 }

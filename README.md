@@ -75,7 +75,7 @@ The firmware is built around three cooperating state machines:
 
 ```
 ┌──────────────────────────────┐
-│  controlstate  (main.cpp)    │  Waiting → ACTIVE → STOP (match lifecycle,
+│  controlState  (main.cpp)    │  WAITING → ACTIVE → STOP (match lifecycle,
 │  IR remote handling          │  strategy selection, LED feedback)
 └──────────────┬───────────────┘
                │
@@ -87,14 +87,14 @@ The firmware is built around three cooperating state machines:
                │
 ┌──────────────▼───────────────┐
 │  motion layer (functions.h)  │  move/rotate primitives, exponential
-│  PWM smoothing + differential│  PWM smoothing (MotionServerRun),
+│  PWM smoothing + differential│  PWM smoothing (updateMotors),
 │  drive (128-centered)        │  millis()-based timing
 └──────────────────────────────┘
 ```
 
-- Sensors are read every loop (`readsesnors()`); state transitions react on the same tick.
+- Sensors are read every loop (`readSensors()`); state transitions react on the same tick.
 - Motor output uses a **128-centered differential-drive PWM scheme**: `128` = stop, `>128` = forward, `<128` = reverse.
-- The `MotionServerRun()` filter smoothly ramps PWM targets to reduce mechanical shock.
+- The `updateMotors()` filter smoothly ramps PWM targets to reduce mechanical shock.
 
 ## Sumo · Key Features
 
@@ -313,11 +313,12 @@ DF-oss/
             └── src/
                 ├── main.cpp             # Entry point: setup(), loop(), control
                 │                        #   state machine + advanced strategy states
-                ├── strategies.h         # simple() / smart() strategy logic
+                ├── strategies.h         # runSimpleStrategy() / runSmartStrategy() logic
                 ├── functions.h          # Motion primitives, PWM smoothing
-                │                        #   (MotionServerRun), helpers
-                └── pins.h               # Pin map, sensor read variables, state
-                                        #   constants, timer variables
+                │                        #   (updateMotors), helpers
+                ├── pins.h               # Pin map, sensor read variables
+                └── state.h              # State enums, strategy selection, timers,
+                                        #   flags
 ```
 
 ## Contributing & Credits
