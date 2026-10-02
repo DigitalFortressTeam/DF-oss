@@ -8,10 +8,12 @@ on:
 
 jobs:
   sync-to-public-repo:
+    # The sync copies this file into DF-oss too; only run it in the repo that owns the sync.
+    if: github.repository == 'DigitalFortressTeam/DF-oss-fork'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout DF-oss-fork
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
