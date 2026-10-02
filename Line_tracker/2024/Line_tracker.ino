@@ -20,6 +20,8 @@ constexpr byte WIDE_LEFT_SENSOR_PIN = 7;
 // Speed
 // ---------------------------------------------------------------------------
 constexpr float BASE_SPEED = 255;
+constexpr int MOTOR_MIN_SPEED = 0;
+constexpr int MOTOR_MAX_SPEED = 255;
 float leftMotorSpeed, rightMotorSpeed;
 float speedDifference;
 
@@ -71,10 +73,12 @@ void applyPidSteering(int rightSensorValue, int leftSensorValue) {
   pidOutput = derivativeTerm + proportionalTerm + integralTerm;
 
 
-  // Finding and using the speed of motors
-  speedDifference = byte(map(pidOutput, 0, 1023, 0, 255));
-  rightMotorSpeed = BASE_SPEED + speedDifference;
-  leftMotorSpeed = BASE_SPEED - speedDifference;
+  // Finding and using the speed of motors.
+  // The difference is signed (negative steers the other way) and both speeds are
+  // kept within the PWM range, so they cannot wrap around.
+  speedDifference = map(pidOutput, 0, 1023, 0, 255);
+  rightMotorSpeed = constrain(BASE_SPEED + speedDifference, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
+  leftMotorSpeed = constrain(BASE_SPEED - speedDifference, MOTOR_MIN_SPEED, MOTOR_MAX_SPEED);
   analogWrite(RIGHT_MOTOR_PIN, rightMotorSpeed);
   analogWrite(LEFT_MOTOR_PIN, leftMotorSpeed);
 
@@ -94,9 +98,7 @@ void performFullRightTurn(int rightSensorValue, int leftSensorValue) {
 
 
   // Comparing if it catches light or not
-  // NOTE: this is an assignment ("=") and not a comparison ("=="), kept as in the original code.
-  // It always evaluates to false, so this turn never happens.
-  if (wideRightSensorReading = 0) {
+  if (wideRightSensorReading == 0) {
 
     // Runs the left motor alone for a short period of time to make a light turn
     analogWrite(RIGHT_MOTOR_PIN, 0);
@@ -107,6 +109,8 @@ void performFullRightTurn(int rightSensorValue, int leftSensorValue) {
       // Keeping the left motor on until the close sensors are on the track again
       analogWrite(RIGHT_MOTOR_PIN, 0);
       analogWrite(LEFT_MOTOR_PIN, FULL_TURN_KICK_MOTOR_SPEED);
+      rightSensorValue = analogRead(RIGHT_SENSOR_PIN);
+      leftSensorValue = analogRead(LEFT_SENSOR_PIN);
     }
   }
 }
@@ -118,17 +122,19 @@ void performFullLeftTurn(int rightSensorValue, int leftSensorValue) {
   bool wideLeftSensorReading = digitalRead(WIDE_LEFT_SENSOR_PIN);
 
   // Checking if it catches light or not
-  // NOTE: assignment ("=") instead of comparison ("=="), kept as in the original code,
-  // so this turn never happens either.
-  if (wideLeftSensorReading = 0) {
+  if (wideLeftSensorReading == 0) {
 
 
     analogWrite(RIGHT_MOTOR_PIN, FULL_TURN_KICK_MOTOR_SPEED);
     analogWrite(LEFT_MOTOR_PIN, 0);
     delay(FULL_TURN_KICK_DURATION_MS);
     while (rightSensorValue > FULL_TURN_ON_TRACK_THRESHOLD or leftSensorValue > FULL_TURN_ON_TRACK_THRESHOLD) {
+
+      // Keeping the right motor on until the close sensors are on the track again
       analogWrite(RIGHT_MOTOR_PIN, FULL_TURN_KICK_MOTOR_SPEED);
       analogWrite(LEFT_MOTOR_PIN, 0);
+      rightSensorValue = analogRead(RIGHT_SENSOR_PIN);
+      leftSensorValue = analogRead(LEFT_SENSOR_PIN);
     }
   }
 }
@@ -147,7 +153,6 @@ void loop() {
 
   // Applying the functions
   performFullLeftTurn(rightSensorReading, leftSensorReading);
-  // NOTE: the left reading is passed for both arguments, kept as in the original code.
-  performFullRightTurn(leftSensorReading, leftSensorReading);
+  performFullRightTurn(rightSensorReading, leftSensorReading);
   applyPidSteering(rightSensorReading, leftSensorReading);
 }

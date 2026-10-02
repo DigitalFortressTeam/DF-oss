@@ -8,7 +8,8 @@ IR remote commands, and records every hardware call (pin reads and writes, `dela
 `millis`, serial prints) plus the state machine values into a hash. If the code still
 behaves exactly the same, every hash still matches `golden_hashes.txt`.
 
-The recorded hashes come from the original, pre-refactor code.
+The Sumo hashes come from the original, pre-refactor code. The line tracker hashes were
+re-recorded after its bug fixes (an intended behaviour change).
 
 ## Usage
 

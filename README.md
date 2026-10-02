@@ -241,21 +241,21 @@ Each loop iteration:
 2. Update the running sum → `integral += error`.
 3. Compute the change → `derivative = error − lastError`.
 4. Combine → `pid = (Kp × error) + (Ki × integral) + (Kd × derivative)`.
-5. Map the PID output onto a speed difference, then drive the two motors in opposite directions by that amount:
-   - `rightMotor = baseSpeed + correction`
-   - `leftMotor  = baseSpeed − correction`
+5. Map the PID output onto a signed speed difference, then apply it to the two motors, each kept within the 0–255 PWM range:
+   - `rightMotor = constrain(baseSpeed + correction, 0, 255)`
+   - `leftMotor  = constrain(baseSpeed − correction, 0, 255)`
 6. Save `lastError = error` for the next iteration, then short `delay(5)` to pace the loop.
 
-When the robot is perfectly centered, `error ≈ 0` and both motors run at `baseSpeed` (255) — full speed straight. Any drift creates a non-zero `pid`, which steers the robot back toward the line automatically. `Kd = 14` is relatively high, which makes the follower aggressive at cancelling oscillation so it can take curves fast without weaving.
+When the robot is perfectly centered, `error ≈ 0` and both motors run at `baseSpeed` (255) — full speed straight. Because the base speed is already the maximum, a correction steers by slowing one wheel: a positive error slows the left wheel, a negative error slows the right wheel. `Kd = 14` is relatively high, which makes the follower aggressive at cancelling oscillation so it can take curves fast without weaving.
 
 ## Line Tracking · Sharp Turns (Full-Turn Sensors)
 
 PID alone follows gentle curves but struggles at 90°+ turns where the line suddenly leaves the sensor range. Two extra **wide (full-turn) sensors** placed further apart detect when the line has drifted far to one side and trigger a hard turn:
 
-- **`Full_Right_Turn()`** — if the right wide sensor detects the line, the robot stops the right motor and drives only the left motor, spinning hard left until the close sensors pick the line up again.
-- **`Full_Left_Turn()`** — the mirror: drive only the right motor to spin hard right until the close sensors reacquire the line.
+- **`performFullRightTurn()`** — if the right wide sensor reads `LOW`, the robot stops the right motor and drives only the left motor, turning hard right until the close sensors pick the line up again.
+- **`performFullLeftTurn()`** — the mirror: if the left wide sensor reads `LOW`, drive only the right motor to turn hard left until the close sensors reacquire the line.
 
-`delay(50)` gives the turn a small initial kick before the `while` loop holds the turn until the two close sensors are back over the line, at which point normal PID resumes.
+`delay(50)` gives the turn a small initial kick, then the `while` loop keeps turning and re-reading the close sensors until both read `100` or less, at which point normal PID resumes.
 
 ## Line Tracking · Arduino PID Follower
 
@@ -323,7 +323,8 @@ DF-oss/
 │               ├── config.h             # Tuning values: speeds, durations, IR commands
 │               └── pins.h               # Pin map
 └── tools/
-    └── golden_master/                   # Behaviour check for refactors (see its README)
+    ├── golden_master/                   # Behaviour check for refactors (see its README)
+    └── line_tracker_test/               # Regression tests for the line tracker fixes
 ```
 
 ## Contributing & Credits
@@ -345,7 +346,8 @@ DF-oss/
 ## Sumo · Code Quality
 
 The Sumo firmware and the line tracker were refactored for readability without changing
-their behaviour (verified with [`tools/golden_master`](tools/golden_master/README.md)):
+their behaviour (verified with [`tools/golden_master`](tools/golden_master/README.md)).
+The line tracker bugs were then fixed separately (see `tools/line_tracker_test`):
 
 - One naming convention: `camelCase` variables and functions, `UPPER_SNAKE_CASE` constants,
   `enum class` states with `PascalCase` values.
@@ -367,8 +369,6 @@ These change behaviour, so they were left for a deliberate decision:
 | `RobotState::Stop` value | `state.h` | Originally meant to be 4, but 8 was in effect (kept) |
 | Unused strategies | `strategies.cpp` | `runSimpleStrategy()` / `runSmartStrategy()` are complete but never called |
 | Unused timers | `state.h` | `tornadoSearchStartMs`, `randomSearchStep2StartMs`, `rotationStartMs` are recorded but never read |
-| Line tracker full turns never run | `Line_tracker.ino` | `if (reading = 0)` assigns instead of compares; flagged with `NOTE` comments |
-| Line tracker right turn input | `Line_tracker.ino` `loop()` | The left sensor reading is passed for both arguments |
 
 ## License
 
